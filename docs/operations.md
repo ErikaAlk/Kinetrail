@@ -2,7 +2,7 @@
 
 适用版本：0.1.0（Cloudflare Worker + D1 + OAuth Provider KV + Access OIDC）。本文命令均在仓库根目录执行，PowerShell / Bash 通用。
 
-> 2026-09-14 已完成首次部署的第 1–5 步与第 7 步冒烟；第 6 步本人绑定、FitDays secrets 与 G1–G5 均**未验证**。每完成一项请在本文末尾“验证记录”补上日期与结论。
+> 2026-09-14 已完成首次部署第 1–7 步（含本人绑定与全部 secrets）；G1–G5 以末尾“验证记录”为准。每完成一项请在本文末尾“验证记录”补上日期与结论。
 
 ## 0. 当前线上部署
 
@@ -13,8 +13,8 @@
 | D1 | `kinetrail` / `a5b20e9b-2531-4753-8c00-6774dfe93206`，已应用 `0001_init.sql` |
 | KV | `kinetrail-OAUTH_KV` / `30800a8f19c0417aac3121f080ba8850` |
 | Access for SaaS | 应用 `Kinetrail`（`d97f5f5e-172c-4443-b65f-0b0e863449d6`），IdP 邮箱验证码，策略“邮箱白名单”（与 dsh 相同的两个邮箱），PKCE + client secret |
-| 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY` |
-| 未设 | `OWNER_OIDC_SUB`（为空 = 绑定模式，不签发授权）、`FITDAYS_LOGIN` `FITDAYS_PASSWORD` `FITDAYS_REGION` |
+| 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY`、`FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION` |
+| 本人绑定 | `OWNER_OIDC_SUB` 已写入 vars（邮箱验证码登录得到的 sub；换登录邮箱会得到不同 sub，需重新绑定） |
 
 ## 1. 组成与数据边界
 
@@ -185,6 +185,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | 日期 | 范围 | 结论 |
 | --- | --- | --- |
 | 2026-09-14 | 本地 workerd/Miniflare、合成数据：测量链、训练事务、趋势、合成 OIDC、Inspector 互通、加密备份恢复演练 | 通过 |
+| 2026-09-14 | 真实 Access 登录 → 授权确认页 → 点“授权”报“来源校验失败”：页面 `Referrer-Policy: no-referrer` 使浏览器对表单 POST 发 `Origin: null`（线上表单对照实验复现）；确认页改为 `same-origin` 并补回归断言 | 已修复部署，待真实授权复测 |
 | 2026-09-14 | 云端首次部署冒烟：`/healthz` 200；匿名 `POST /mcp` 401 且带 `resource_metadata`；AS 元数据只列 `S256`；Access OIDC 发现文档端点与 vars 一致；workers.dev 入口 404；cron `*/10` 已注册 | 通过（未经过真实登录） |
 | — | G1 真实 CN | 未验证 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |

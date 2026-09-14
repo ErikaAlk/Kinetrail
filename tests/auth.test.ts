@@ -214,6 +214,8 @@ describe('Access OIDC 本人授权 + consent（合成 IdP）', () => {
       "form-action 'self' https://client.test",
     )
     expect(flow.consentPage.headers.get('x-frame-options')).toBe('DENY')
+    // no-referrer 会让浏览器对表单 POST 发送 `Origin: null`，/consent 的来源校验必然失败（线上实测）。
+    expect(flow.consentPage.headers.get('referrer-policy')).toBe('same-origin')
 
     const approved = await postConsent(address, flow.start.cookie, { ...flow.fields, decision: 'approve' })
     expect(approved.status).toBe(302)
