@@ -9,10 +9,10 @@
 
 | 范围 | 状态 |
 | --- | --- |
-| 阶段 0–3：Worker 骨架、测量链、训练事务与趋势、Access OIDC + consent | 已实现；本地 workerd 测试 78 项通过 |
+| 阶段 0–3：Worker 骨架、测量链、训练事务与趋势、Access OIDC + consent | 已实现；本地 workerd 测试 79 项通过 |
 | 生产 bundle 与官方 MCP Inspector 互通 | 已验证（合成数据，见 `research/production-inspector-results.json`） |
 | 加密 + 签名备份 → 验签解密 → 隔离库恢复 → 校验 | 本地演练通过（含篡改拒绝） |
-| 独立审查（Claude 子代理，两轮） | 第一轮 12 条、第二轮 5 条发现已修复并有回归测试 |
+| 独立审查（Claude 子代理，四轮） | 各轮发现均已修复并有回归测试；第四轮修复后未再送审 |
 | G1 真实 FitDays CN、G2 云端容量与恢复、G3 真实 Access/CIMD/ChatGPT、G4/G5 “减肥计划”双聊天 | **未验证**，需要部署与真实凭据 |
 
 未通过 G1–G5 前不是生产可用版本。
