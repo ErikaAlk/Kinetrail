@@ -103,8 +103,15 @@ export function createWorker(deps: Deps) {
         ctx.waitUntil(
           env.SYNC_SCHEDULER.getByName('scheduler')
             .ensure()
-            .catch(() => {
+            .then(() => logEvent({ event: 'scheduler', status: 'ensured' }))
+            .catch((error: unknown) => {
               schedulerEnsured = false
+              // 只记错误类型名（如 TypeError），不记 message。
+              logEvent({
+                event: 'scheduler',
+                status: 'ensure_failed',
+                category: error instanceof Error ? error.name : 'unknown',
+              })
             }),
         )
       }
