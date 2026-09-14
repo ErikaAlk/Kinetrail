@@ -121,8 +121,17 @@ function lex(text: string): Token[] {
       while (j < text.length) {
         const d = text[j] as string
         if (d === '\\') {
-          buf += text[j + 1] ?? ''
-          j += 2
+          // 解码转义（含 Unicode 转义），避免用转义写法把秘密键名藏过去。
+          const escaped = text[j + 1] ?? ''
+          const hex = text.slice(j + 2, j + 6)
+          if (escaped === 'u' && /^[0-9a-fA-F]{4}$/.test(hex)) {
+            buf += String.fromCharCode(Number.parseInt(hex, 16))
+            j += 6
+          } else {
+            buf +=
+              ({ n: '\n', t: '\t', r: '\r', b: '\b', f: '\f' } as Record<string, string>)[escaped] ?? escaped
+            j += 2
+          }
         } else if (d === c) {
           closed = true
           j++
@@ -156,35 +165,44 @@ const safePrefix = (text: string) => /^[\d\s.,;|:+\-TZeE]*$/.test(text)
  */
 export function unparseableSafe(text: string, knownStringKeys: ReadonlySet<string>): boolean {
   const tokens = lex(text)
+  const containers: string[] = []
   let lastKey: string | null = null
   for (let k = 0; k < tokens.length; k++) {
     const token = tokens[k] as Token
-    if (token.kind === 'punct') continue
+    if (token.kind === 'punct') {
+      if (token.text === '{' || token.text === '[') containers.push(token.text)
+      else if (token.text === '}' || token.text === ']') containers.pop()
+      continue
+    }
     const prev = tokens[k - 1]
     const next = tokens[k + 1]
     const atEnd = k === tokens.length - 1
-    if (isSuspiciousValue(token.text, undefined, false)) return false
     if (next?.kind === 'punct' && next.text === ':') {
-      if (isSecretKey(token.text)) return false
+      if (isSecretKey(token.text) || isSuspiciousValue(token.text)) return false
       lastKey = token.text
       continue
     }
     const valuePosition = prev?.kind === 'punct' && prev.text === ':'
-    const keyPosition = !prev || (prev.kind === 'punct' && (prev.text === '{' || prev.text === ','))
-    const key = valuePosition ? lastKey : null
+    // 只有对象里 `{` 或 `,` 之后才是键位置；数组元素永远是值。
+    const inObject = containers.at(-1) === '{' || containers.length === 0
+    const keyPosition =
+      inObject && (!prev || (prev.kind === 'punct' && (prev.text === '{' || prev.text === ',')))
+    const known = valuePosition && lastKey !== null && knownStringKeys.has(lastKey)
+    // 与能解析时一致：已知字符串键下不做手机号形态判断，其他位置都查。
+    if (isSuspiciousValue(token.text, undefined, !known)) return false
     if (token.kind === 'string') {
-      if (atEnd && keyPosition && !valuePosition) {
+      if (atEnd && keyPosition) {
         if (isSecretKey(token.text)) return false
         continue
       }
-      if (key !== null && knownStringKeys.has(key)) continue
+      if (known) continue
       if (safeShape(token.text) || (atEnd && !token.closed && safePrefix(token.text))) continue
       return false
     }
     if (/^(true|false|null)$/.test(token.text) || safeShape(token.text)) continue
     if (atEnd && (safePrefix(token.text) || ['true', 'false', 'null'].some((l) => l.startsWith(token.text))))
       continue
-    if (!valuePosition && /^[A-Za-z]{1,12}$/.test(token.text)) continue
+    if (keyPosition && /^[A-Za-z]{1,12}$/.test(token.text)) continue
     return false
   }
   return true

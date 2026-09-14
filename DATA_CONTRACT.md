@@ -213,7 +213,7 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 - 可疑值：Bearer、JWT、邮箱、任何 URL、MAC；未知字段中的手机号形态（去空格/括号/连字符，允许 +86/0086/86 前缀，字符串和数字都查）。已知字段（上游类型里的 ID/时间/来源类）不做手机号形态判断，避免误删 ID。
 - 已知秘密值精确/子串匹配：登录名、密码、FitDays 等价密码摘要、登录返回的 token/refresh token，以及登录响应与同步响应 `account` 中**认证/联系方式类键**下的值（普通字段如 updated_at 不收集）。
 - 未知字段里的字符串只接受空串、数字、数字列表、日期时间形态，其他一律 `UNCLASSIFIED_STRING` 阻断整条；JSON 样字符串能解析时递归检查。
-- 不能解析的 JSON 样字符串（含 ext_data）按同一规则逐段判断：带引号的键不能是秘密键；带引号的值必须是安全形态（ext_data 的已知字符串键除外）；引号外只允许 JSON 标点、数字、true/false/null 和 12 个字母以内的单词。能确认安全时原串保留、`parse_status=invalid`（如 `{invalid`、`{"deviceNameExt":"客厅秤","smi":7.1`），否则 `SECRET_IN_UNPARSEABLE_STRING` 阻断整条。
+- 不能解析的 JSON 样字符串（含 ext_data）用线性词法分析逐个记号判断，转义先解码、区分对象与数组：键（带不带引号）不能是秘密键；值必须是安全形态且不像手机号（ext_data 的已知字符串键除外）；数组元素一律按值处理；末尾被截断的键片段只查秘密键，截断的值允许数字/日期前缀；对象键位置的裸词只允许 12 个字母以内。能确认安全时原串保留、`parse_status=invalid`（如 `{invalid`、`{"deviceNameExt":"客厅秤","smi":7.1`），否则 `SECRET_IN_UNPARSEABLE_STRING` 阻断整条。
 - `__proto__`、`constructor` 等键按普通数据保留。
 
 **身份、时间与索引**

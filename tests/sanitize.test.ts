@@ -125,6 +125,16 @@ describe('秘密边界', () => {
     ]) {
       expect(clean(JSON.stringify({ data_id: 'w', ext_data: bad })).blocked, bad).toHaveLength(1)
     }
+    // 第四轮：数组末尾的不透明值、截断内容里的手机号、\u 转义藏起来的秘密键名
+    for (const bad of [
+      '{"samples":[1,"9f8e7d6c5b4a3f2e1d0c"',
+      '{"samples":[1,"9f8e7d6c5b4a3f2e1d0c',
+      '{"guardian":"13912345678","x":1',
+      '{"x":13912345678,"y":1',
+      '{"\\u0074oken":"98765432109876","x":1',
+    ]) {
+      expect(clean(JSON.stringify({ data_id: 'w', ext_data: bad })).blocked, bad).toHaveLength(1)
+    }
     const pathological = `{"a":"${'\\"'.repeat(500_000)}`
     const started = Date.now()
     clean(JSON.stringify({ data_id: 'w', ext_data: pathological }))
