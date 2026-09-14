@@ -95,6 +95,42 @@ describe('秘密边界', () => {
     expect(findSecretPath({ raw_text: '[1号机] SN: 1024 我已完成推胸' })).toBeNull()
   })
 
+  it('第三轮回归：真实形态的 ext_data 在任意位置截断都不误拦；不带引号的秘密键拦截；线性耗时', () => {
+    const ext = JSON.stringify({
+      age: 30,
+      bfmControl: -2.1,
+      bodyScore: 82,
+      bodyType: 5,
+      deviceModelExt: 'CS20A',
+      deviceNameExt: 'ICOMON 客厅秤',
+      deviceSoftwareVer: 'V1.2.3',
+      height: 175,
+      onlyMeasureWeight: '0',
+      originalImps: '500,501,502',
+      smi: 7.1,
+      targetWeight: 65.5,
+      whr: 0.85,
+    })
+    const blocked = []
+    for (let n = 2; n < ext.length; n++) {
+      if (clean(JSON.stringify({ data_id: 'w', ext_data: ext.slice(0, n) })).blocked.length > 0)
+        blocked.push(ext.slice(0, n))
+    }
+    expect(blocked).toEqual([])
+    for (const bad of [
+      '{password:hunterhunter,token:AbCdEfGhIjKl',
+      '{pin_password:123456',
+      '{"x":"ab',
+      '{"futureStr":"abc"',
+    ]) {
+      expect(clean(JSON.stringify({ data_id: 'w', ext_data: bad })).blocked, bad).toHaveLength(1)
+    }
+    const pathological = `{"a":"${'\\"'.repeat(500_000)}`
+    const started = Date.now()
+    clean(JSON.stringify({ data_id: 'w', ext_data: pathological }))
+    expect(Date.now() - started).toBeLessThan(3_000)
+  })
+
   it('审查回归：带空格/国际前缀的手机号、数字型手机号与已知秘密值被移除；已知数字字段不误伤', () => {
     const r = sanitizeRecord(
       parseLossless(

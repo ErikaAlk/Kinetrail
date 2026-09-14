@@ -20,12 +20,12 @@ import {
 } from 'node:crypto'
 import {
   closeSync,
+  lstatSync,
   mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
@@ -69,9 +69,11 @@ function shred(dir) {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name)
       try {
-        const size = statSync(path).size
+        // 只覆写普通文件；符号链接可能指向别人的文件，不跟随。
+        const info = lstatSync(path)
+        if (!info.isFile()) continue
         const fd = openSync(path, 'r+')
-        writeSync(fd, Buffer.alloc(size))
+        writeSync(fd, Buffer.alloc(info.size))
         closeSync(fd)
       } catch {}
     }
@@ -79,9 +81,23 @@ function shred(dir) {
   rmSync(dir, { recursive: true, force: true })
 }
 
-// 上次被中断（Ctrl+C、崩溃）留下的明文导出。
+// 上次被中断（Ctrl+C、崩溃）留下的明文导出：只清扫本用户、非符号链接、超过 6 小时的目录，
+// 避免误伤共享 /tmp 里他人伪造的目录，也避免清掉另一个正在运行的备份。
 for (const name of readdirSync(tmpdir())) {
-  if (name.startsWith('kinetrail-backup-')) shred(join(tmpdir(), name))
+  if (!name.startsWith('kinetrail-backup-')) continue
+  const path = join(tmpdir(), name)
+  try {
+    const info = lstatSync(path)
+    const ownedByMe = typeof process.getuid !== 'function' || info.uid === process.getuid()
+    if (
+      info.isDirectory() &&
+      !info.isSymbolicLink() &&
+      ownedByMe &&
+      Date.now() - info.mtimeMs > 6 * 3600_000
+    ) {
+      shred(path)
+    }
+  } catch {}
 }
 
 const work = mkdtempSync(join(tmpdir(), 'kinetrail-backup-'))

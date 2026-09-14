@@ -165,6 +165,54 @@ describe('MCP HTTP 边界', () => {
       )
     const flood = Array.from({ length: 50 }, () => ({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
     expect((await post(flood)).status).toBe(400)
+    // 合计响应超限时逐项替换为错误，不整体丢弃；写工具不允许进批量，且不会执行。
+    const lists = await post(
+      Array.from({ length: 4 }, (_, i) => ({ jsonrpc: '2.0', id: i, method: 'tools/list' })),
+    )
+    expect(lists.status).toBe(200)
+    const listText = await lists.text()
+    expect(new TextEncoder().encode(listText).byteLength).toBeLessThanOrEqual(256 * 1024)
+    expect((JSON.parse(listText) as { id: number }[]).map((r) => r.id)).toEqual([0, 1, 2, 3])
+    const writer = await issueToken(limited, ['workout:read', 'workout:write'])
+    const writeBatch = await dispatch(
+      limited,
+      new Request(`${ORIGIN}/mcp`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${writer.access_token}`,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify([
+          {
+            jsonrpc: '2.0',
+            id: 'w',
+            method: 'tools/call',
+            params: {
+              name: 'start_workout_session',
+              arguments: {
+                idempotency_key: crypto.randomUUID(),
+                expected_revision: 0,
+                started_at: new Date(Date.now() - 60_000).toISOString(),
+                timezone: 'Asia/Shanghai',
+                raw_text: '到健身房了',
+              },
+            },
+          },
+          { jsonrpc: '2.0', id: 'p', method: 'ping' },
+        ]),
+      }),
+    )
+    const writeReplies = (await writeBatch.json()) as {
+      id: string
+      error?: { code: number }
+      result?: unknown
+    }[]
+    expect(writeReplies.find((r) => r.id === 'w')?.error?.code).toBe(-32600)
+    expect(writeReplies.find((r) => r.id === 'p')?.result).toEqual({})
+    expect(
+      (await env.DB.prepare('SELECT COUNT(*) AS n FROM workout_sessions').first<{ n: number }>())?.n,
+    ).toBe(0)
     const statuses: number[] = []
     for (let i = 0; i < 121; i++)
       statuses.push((await post({ jsonrpc: '2.0', id: i, method: 'ping' })).status)

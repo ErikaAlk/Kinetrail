@@ -98,35 +98,93 @@ export function secretKeyInText(text: string): boolean {
   return false
 }
 
-const STRING_LITERAL = /"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g
+type Token =
+  | { kind: 'punct'; text: string }
+  | { kind: 'string'; text: string; closed: boolean }
+  | { kind: 'word'; text: string }
+
+/** 线性词法分析，容忍末尾截断（未闭合的字符串）。不做回溯，输入长度与耗时成正比。 */
+function lex(text: string): Token[] {
+  const tokens: Token[] = []
+  let i = 0
+  while (i < text.length) {
+    const c = text[i] as string
+    if (c === ' ' || c === '\n' || c === '\r' || c === '\t') {
+      i++
+    } else if ('{}[],:'.includes(c)) {
+      tokens.push({ kind: 'punct', text: c })
+      i++
+    } else if (c === '"' || c === "'") {
+      let j = i + 1
+      let buf = ''
+      let closed = false
+      while (j < text.length) {
+        const d = text[j] as string
+        if (d === '\\') {
+          buf += text[j + 1] ?? ''
+          j += 2
+        } else if (d === c) {
+          closed = true
+          j++
+          break
+        } else {
+          buf += d
+          j++
+        }
+      }
+      tokens.push({ kind: 'string', text: buf, closed })
+      i = j
+    } else {
+      let j = i
+      while (j < text.length && !' \n\r\t{}[],:"\''.includes(text[j] as string)) j++
+      tokens.push({ kind: 'word', text: text.slice(i, j) })
+      i = j
+    }
+  }
+  return tokens
+}
+
+const safeShape = (text: string) => SAFE_SHAPES.some((re) => re.test(text.trim()))
+/** 截断的数字/日期前缀，如 `2026-09-1`、`12.`、`1e`。 */
+const safePrefix = (text: string) => /^[\d\s.,;|:+\-TZeE]*$/.test(text)
 
 /**
- * 采集时对“JSON 样但无法解析”的字符串做 fail-closed 判断，与能解析时的规则保持一致：
- * 带引号的键不能是秘密键；带引号的值必须是安全形态（已知字符串键除外）；
- * 引号外只允许 JSON 标点、数字、true/false/null 和不含数字的短单词（如 `{invalid`）。
+ * 采集时对“JSON 样但无法解析”的字符串做 fail-closed 判断，与能解析时的规则一致，并容忍末尾截断：
+ * - 键（带不带引号都算，后面跟冒号）不能是秘密键；末尾没有冒号的键片段只查是否秘密键；
+ * - 值位置的字符串必须是安全形态，已知字符串键（如 deviceModelExt）除外；末尾被截断的值允许数字/日期前缀；
+ * - 值位置的裸词只允许数字、true/false/null（末尾允许它们的前缀）；键位置的裸词只允许 12 个字母以内（如 `{invalid`）。
  */
 export function unparseableSafe(text: string, knownStringKeys: ReadonlySet<string>): boolean {
+  const tokens = lex(text)
   let lastKey: string | null = null
-  let outside = ''
-  let cursor = 0
-  for (const match of text.matchAll(STRING_LITERAL)) {
-    outside += `${text.slice(cursor, match.index)} `
-    cursor = match.index + match[0].length
-    const content = match[1] ?? match[2] ?? ''
-    if (/^\s*:/.test(text.slice(cursor))) {
-      if (isSecretKey(content) || isSuspiciousValue(content, undefined, false)) return false
-      lastKey = content
+  for (let k = 0; k < tokens.length; k++) {
+    const token = tokens[k] as Token
+    if (token.kind === 'punct') continue
+    const prev = tokens[k - 1]
+    const next = tokens[k + 1]
+    const atEnd = k === tokens.length - 1
+    if (isSuspiciousValue(token.text, undefined, false)) return false
+    if (next?.kind === 'punct' && next.text === ':') {
+      if (isSecretKey(token.text)) return false
+      lastKey = token.text
       continue
     }
-    const known = lastKey !== null && knownStringKeys.has(lastKey)
-    lastKey = null
-    if (isSuspiciousValue(content, undefined, false)) return false
-    if (!known && !SAFE_SHAPES.some((re) => re.test(content.trim()))) return false
-  }
-  outside += text.slice(cursor)
-  for (const token of outside.match(/[^\s{}[\],:]+/g) ?? []) {
-    if (/^(true|false|null)$/.test(token) || /^[A-Za-z]{1,12}$/.test(token)) continue
-    if (SAFE_SHAPES.some((re) => re.test(token))) continue
+    const valuePosition = prev?.kind === 'punct' && prev.text === ':'
+    const keyPosition = !prev || (prev.kind === 'punct' && (prev.text === '{' || prev.text === ','))
+    const key = valuePosition ? lastKey : null
+    if (token.kind === 'string') {
+      if (atEnd && keyPosition && !valuePosition) {
+        if (isSecretKey(token.text)) return false
+        continue
+      }
+      if (key !== null && knownStringKeys.has(key)) continue
+      if (safeShape(token.text) || (atEnd && !token.closed && safePrefix(token.text))) continue
+      return false
+    }
+    if (/^(true|false|null)$/.test(token.text) || safeShape(token.text)) continue
+    if (atEnd && (safePrefix(token.text) || ['true', 'false', 'null'].some((l) => l.startsWith(token.text))))
+      continue
+    if (!valuePosition && /^[A-Za-z]{1,12}$/.test(token.text)) continue
     return false
   }
   return true

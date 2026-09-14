@@ -371,20 +371,28 @@ export async function handleMcpRequest(
       return jsonResponse(400, rpcError(null, -32600, 'Invalid Request: batch size'))
     }
     const replies: object[] = []
+    let total = 2
     for (const message of parsed) {
+      const msg = message as { id?: unknown; method?: unknown; params?: { name?: unknown } } | null
+      const id = typeof msg?.id === 'string' || typeof msg?.id === 'number' ? msg.id : null
+      // 写工具不进批量：避免批量结果被整体丢弃时客户端拿不到已提交的收据而换键重试。
+      if (msg?.method === 'tools/call' && registry.get(String(msg.params?.name))?.write) {
+        if (id !== null) replies.push(rpcError(id, -32600, 'Write tools must be sent as individual requests'))
+        continue
+      }
       const reply = await dispatch(message, registry, base)
-      if (reply !== null) replies.push(reply)
+      if (reply === null) continue
+      const size = byteLength(JSON.stringify(reply)) + 1
+      if (total + size > MAX_RESPONSE_BYTES) {
+        // 只读结果超出合计上限：该项改为错误，其余照常返回。
+        replies.push(rpcError(id, -32000, 'Batch response too large; send this request individually'))
+        continue
+      }
+      total += size
+      replies.push(reply)
     }
     if (replies.length === 0) return new Response(null, { status: 202 })
-    const body = JSON.stringify(replies)
-    if (byteLength(body) > MAX_RESPONSE_BYTES) {
-      // 其中的写入若已提交，可用同一个 idempotency_key 取回收据。
-      return jsonResponse(413, rpcError(null, -32600, 'Batch response too large; send requests individually'))
-    }
-    return new Response(body, {
-      status: 200,
-      headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
-    })
+    return jsonResponse(200, replies)
   }
   const reply = await dispatch(parsed, registry, base)
   return reply === null ? new Response(null, { status: 202 }) : jsonResponse(200, reply)
