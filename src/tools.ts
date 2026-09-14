@@ -11,14 +11,20 @@ import {
   listProfiles,
   refreshData,
 } from './queries'
-import { KtError } from './util'
+import { getProgressOverview, getTrainingTrend, getTrend } from './trends'
+import {
+  amendWorkoutEntry,
+  finalizeWorkoutSession,
+  getOpenWorkoutSessions,
+  getWorkoutHistory,
+  getWriteReceipt,
+  recordWorkoutEvent,
+  reopenWorkoutSession,
+  startWorkoutSession,
+} from './workouts'
 
 const BIA_NOTE = '体脂秤 BIA 数值适合看趋势，不是医疗诊断。'
 const RANGE_NOTE = 'start/end 为带时区偏移的 RFC3339，半开区间 [start,end)。'
-
-const pending = async (): Promise<never> => {
-  throw new KtError('STORAGE_FAILED', { category: 'not_implemented' })
-}
 
 export const TOOLS: ToolDefinition[] = [
   {
@@ -67,7 +73,7 @@ export const TOOLS: ToolDefinition[] = [
     name: 'get_trend',
     title: '体测趋势',
     description: `体重、体脂率、脂肪量、去脂体重趋势。先按自然日（默认 Asia/Shanghai）取当日中位数，再对周期内有数据的日等权平均；脂肪量按单次测量先算再聚合。group_key：period=周期值，ma7=最近 7 个日历日均值（仅 interval=day），pop_change/pop_change_pct=与上一周期对比（仅 week/month）。只描述观察结果，不作因果推断。${RANGE_NOTE}${BIA_NOTE}`,
-    handler: pending,
+    handler: getTrend,
   },
   {
     name: 'refresh_data',
@@ -81,65 +87,65 @@ export const TOOLS: ToolDefinition[] = [
     title: '未结束的训练会话',
     description:
       '列出未结束的训练会话及 revision。记录训练前先调用，按返回的 session_id 与 revision 写入；selection_required=true 或存在多个候选时先向用户确认。',
-    handler: pending,
+    handler: getOpenWorkoutSessions,
   },
   {
     name: 'get_workout_history',
     title: '训练历史',
     description: `分页读取已保存的训练事实：逐组力量数据、有氧数据、用户原话、会话总结和修订版本。分析历史时以此为准，不依赖聊天记忆。include_superseded=true 返回被修订或撤回的旧版本。${RANGE_NOTE}`,
-    handler: pending,
+    handler: getWorkoutHistory,
   },
   {
     name: 'get_training_trend',
     title: '训练趋势',
     description: `训练会话数、有效训练日、组数、训练量（Σ kg×次数）、Epley 估算 1RM（估算值，非实测）与有氧时长/距离趋势。力量指标按“动作+场馆+器械+负重口径”分组，不同器械不合并。${RANGE_NOTE}`,
-    handler: pending,
+    handler: getTrainingTrend,
   },
   {
     name: 'get_progress_overview',
     title: '体测与训练概览',
     description: `同一时间窗并列返回体测趋势与训练总体趋势，附样本数与计算口径；只描述同期观察结果，不声称因果。${RANGE_NOTE}${BIA_NOTE}`,
-    handler: pending,
+    handler: getProgressOverview,
   },
   {
     name: 'get_write_receipt',
     title: '写入收据',
     description:
       '按 idempotency_key 查询训练写入收据，用于超时或无法确认是否保存时。查不到只表示目前没有已提交的收据，不能据此断定请求永远不会提交。',
-    handler: pending,
+    handler: getWriteReceipt,
   },
   {
     name: 'start_workout_session',
     title: '开始训练会话',
     description:
       '用户到场或明确开始训练时建立空的 open 会话，不记录任何已完成的组。expected_revision 固定为 0。只有返回 persistence=committed 才能说已保存。',
-    handler: pending,
+    handler: startWorkoutSession,
   },
   {
     name: 'record_workout_event',
     title: '记录已完成训练',
     description:
       '只在用户明确报告自己已经完成的训练时调用；计划、建议、假设、引用他人、否定或未确认完成的内容不得调用。raw_text 填用户与本次训练直接相关的原话；逐组填写，缺失的负重/次数留空，不要补值。先用 get_open_workout_sessions 取得 session_id 与 revision；没有 open 会话时省略 session_id 且 expected_revision=0。每个写请求只生成一次 idempotency_key，超时重试必须复用同键同参数。只有返回 persistence=committed 才能告诉用户已保存；失败时明确说本次未持久化。',
-    handler: pending,
+    handler: recordWorkoutEvent,
   },
   {
     name: 'finalize_workout_session',
     title: '结束训练会话',
     description:
       '用户明确说练完或结束时结束会话，可附用户报告的总时长、整体 RPE 和备注。结束后继续记录需要 reopen_workout_session 或新会话。',
-    handler: pending,
+    handler: finalizeWorkoutSession,
   },
   {
     name: 'reopen_workout_session',
     title: '重新打开训练会话',
     description: '用户明确要求继续一个已结束的训练会话时重新打开它。',
-    handler: pending,
+    handler: reopenWorkoutSession,
   },
   {
     name: 'amend_workout_entry',
     title: '修正训练记录',
     description:
       '纠正或撤回已保存的动作：生成新版本并保留旧值，不物理删除。replacement 为完整的更正后动作；state=retracted 表示撤回（该动作不再计入统计）。',
-    handler: pending,
+    handler: amendWorkoutEntry,
   },
 ]
