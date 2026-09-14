@@ -61,6 +61,7 @@ tests/             Vitest（workerd）测试
 scripts/           秘密扫描、加密备份/恢复、许可证清单
 docs/operations.md 部署、验收关卡、升级、备份恢复、凭据轮换、故障排查、彻底删除
 research/          Astra 离线研究、契约生成器与互通检查（不是生产代码）
+assets/            图标（icon.svg 源文件、icon-512.png 供 ChatGPT 连接器上传）
 ```
 
 ## 文档
