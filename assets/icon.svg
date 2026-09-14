@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Kinetrail</title>
+  <rect width="512" height="512" rx="112" fill="#00778F"/>
+  <circle cx="95" cy="330" r="20" fill="#FFFFFF" opacity="0.55"/>
+  <path d="M155 330 C 247 330 257 204 333 204" fill="none" stroke="#FFFFFF" stroke-width="48" stroke-linecap="round"/>
+  <circle cx="383" cy="204" r="40" fill="none" stroke="#FFFFFF" stroke-width="28"/>
+</svg>
