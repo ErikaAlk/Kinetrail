@@ -2,7 +2,19 @@
 
 适用版本：0.1.0（Cloudflare Worker + D1 + OAuth Provider KV + Access OIDC）。本文命令均在仓库根目录执行，PowerShell / Bash 通用。
 
-> 截至 2026-09-14，以下流程只在本地 workerd/Miniflare 与合成数据上验证过。云端部署、真实 FitDays、真实 Access、ChatGPT 连接均**未验证**，对应 IMPLEMENTATION_PLAN 的 G1–G5。每完成一项请在本文末尾“验证记录”补上日期与结论。
+> 2026-09-14 已完成首次部署的第 1–5 步与第 7 步冒烟；第 6 步本人绑定、FitDays secrets 与 G1–G5 均**未验证**。每完成一项请在本文末尾“验证记录”补上日期与结论。
+
+## 0. 当前线上部署
+
+| 项 | 值 |
+| --- | --- |
+| 账户 | `b721713d229cdf4266ab015cbb4c00da`（唯一账户） |
+| 入口 | `https://kinetrail.erikaalk.click`（Workers 自定义域名；`workers_dev`/`preview_urls` 关闭） |
+| D1 | `kinetrail` / `a5b20e9b-2531-4753-8c00-6774dfe93206`，已应用 `0001_init.sql` |
+| KV | `kinetrail-OAUTH_KV` / `30800a8f19c0417aac3121f080ba8850` |
+| Access for SaaS | 应用 `Kinetrail`（`d97f5f5e-172c-4443-b65f-0b0e863449d6`），IdP 邮箱验证码，策略“邮箱白名单”（与 dsh 相同的两个邮箱），PKCE + client secret |
+| 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY` |
+| 未设 | `OWNER_OIDC_SUB`（为空 = 绑定模式，不签发授权）、`FITDAYS_LOGIN` `FITDAYS_PASSWORD` `FITDAYS_REGION` |
 
 ## 1. 组成与数据边界
 
@@ -29,6 +41,8 @@
    ```
 
    把输出的 `database_id` 与 KV `id` 替换进 `wrangler.jsonc` 的占位值，然后 `npm run types`。
+
+   账户必须已有 workers.dev 子域（本账户为 `erikaalk`），否则部署时 cron 触发器报 10063、只部分生效；即使本 Worker 关闭了 `workers_dev` 也一样。
 
 2. 设置 vars：`PUBLIC_ORIGIN` 改为实际 HTTPS 源（例如 `https://kinetrail.<子域>.workers.dev`，不带尾斜杠）；`OWNER_ID` 保持稳定（改了会让已有数据“换主人”）；`FITDAYS_HISTORY_START` 设为账户最早测量之前的日期。
 
@@ -171,6 +185,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | 日期 | 范围 | 结论 |
 | --- | --- | --- |
 | 2026-09-14 | 本地 workerd/Miniflare、合成数据：测量链、训练事务、趋势、合成 OIDC、Inspector 互通、加密备份恢复演练 | 通过 |
+| 2026-09-14 | 云端首次部署冒烟：`/healthz` 200；匿名 `POST /mcp` 401 且带 `resource_metadata`；AS 元数据只列 `S256`；Access OIDC 发现文档端点与 vars 一致；workers.dev 入口 404；cron `*/10` 已注册 | 通过（未经过真实登录） |
 | — | G1 真实 CN | 未验证 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |
 | — | G3 真实 Access/CIMD/ChatGPT 回调 | 未验证 |
