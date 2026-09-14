@@ -1,0 +1,9 @@
+{
+  "synthetic_only": true,
+  "bundle": "wrangler deploy --dry-run output",
+  "anonymous_mcp_401": true,
+  "inspector_tools_list": 19,
+  "inspector_scope_denied": true,
+  "inspector_write_then_read": true,
+  "runtime": "v22.23.2"
+}

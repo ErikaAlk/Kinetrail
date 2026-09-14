@@ -18,9 +18,7 @@
   "dependencies": {
     "@cfworker/json-schema": "4.1.1",
     "@cloudflare/workers-oauth-provider": "0.10.3",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "fitdays-api": "1.0.4",
-    "zod": "4.4.3"
+    "fitdays-api": "1.0.4"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.13",

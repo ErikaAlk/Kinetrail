@@ -5,7 +5,7 @@
 import { FitDaysApiError, FitDaysClient, hashPassword } from 'fitdays-api'
 import type { Deps } from './mcp'
 import { isCredentialKey } from './sanitize'
-import { KtError, parseLossless } from './util'
+import { KtError, parseLossless, readBodyLimited } from './util'
 
 export const REGION_ORIGINS = {
   cn: 'https://online.fitdays.cn',
@@ -56,27 +56,13 @@ export interface FetchResult {
 }
 
 async function readLimited(response: Response, limit: number): Promise<string> {
-  if (!response.body) return ''
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > limit) {
-      await reader.cancel()
-      throw new KtError('INCOMPLETE_SYNC', { category: 'response_too_large' })
-    }
-    chunks.push(value)
+  const bytes = await readBodyLimited(response.body, limit)
+  if (bytes === null) throw new KtError('INCOMPLETE_SYNC', { category: 'response_too_large' })
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes)
+  } catch {
+    throw new KtError('INCOMPLETE_SYNC', { category: 'invalid_utf8' })
   }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes)
 }
 
 /** 从登录/同步响应里收集账户秘密值（token、邮箱、手机号等），供采集时精确匹配。 */

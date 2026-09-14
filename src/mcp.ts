@@ -1,20 +1,17 @@
 // Streamable HTTP（无状态、JSON 响应）+ 工具注册、scope、限流、输入/输出校验和统一信封。
 
 import { Validator } from '@cfworker/json-schema'
-import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
-import {
-  CallToolRequestSchema,
-  type CallToolResult,
-  ListToolsRequestSchema,
-  McpError,
-  ErrorCode as RpcErrorCode,
-} from '@modelcontextprotocol/sdk/types.js'
-import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker'
 import { consumeRateLimit } from './ratelimit'
 import { findSecretPath } from './sanitize'
 import { type ContractTool, contractTools, inlineRefs, type Scope } from './schemas'
-import { byteLength, KtError, logEvent } from './util'
+import { byteLength, KtError, logEvent, readBodyLimited } from './util'
+
+export interface CallToolResult {
+  structuredContent: Record<string, unknown>
+  content: { type: 'text'; text: string }[]
+  isError?: boolean
+  _meta?: Record<string, unknown>
+}
 
 export const MAX_REQUEST_BYTES = 64 * 1024
 export const MAX_RESPONSE_BYTES = 256 * 1024
@@ -161,7 +158,7 @@ export async function callTool(
   ctx: ToolContext,
 ): Promise<CallToolResult> {
   const tool = registry.get(name)
-  if (!tool) throw new McpError(RpcErrorCode.InvalidParams, 'Unknown tool')
+  if (!tool) throw new Error('unknown tool')
   const started = Date.now()
   const required = tool.contract.securitySchemes[0]?.scopes ?? []
   let envelope: Envelope
@@ -244,11 +241,71 @@ export async function callTool(
   }
 }
 
-const jsonError = (status: number, code: number, message: string, headers: Record<string, string> = {}) =>
-  new Response(JSON.stringify({ jsonrpc: '2.0', error: { code, message }, id: null }), {
+// ───────────── Streamable HTTP（无状态、JSON 响应） ─────────────
+// 不用 MCP SDK 的 Server/transport：SDK 1.30 在 server/index.js 静态引入 Ajv（含 new Function），
+// 违反“无 eval 依赖”验收。协议面只有 initialize/ping/tools/list/tools/call + 通知，按 SDK 行为逐项对齐。
+export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
+const SERVER_INFO = { name: 'kinetrail', title: 'Kinetrail（身迹）', version: '0.1.0' }
+
+type JsonRpcId = string | number
+
+const jsonResponse = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+  new Response(body === null ? null : JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers },
   })
+
+const rpcError = (id: JsonRpcId | null, code: number, message: string) => ({
+  jsonrpc: '2.0',
+  id,
+  error: { code, message },
+})
+
+async function dispatch(
+  message: unknown,
+  registry: Map<string, RegisteredTool>,
+  base: Omit<ToolContext, 'requestId'>,
+): Promise<object | null> {
+  if (message === null || typeof message !== 'object' || Array.isArray(message)) {
+    return rpcError(null, -32600, 'Invalid Request')
+  }
+  const msg = message as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown }
+  const hasId = typeof msg.id === 'string' || typeof msg.id === 'number'
+  if (msg.jsonrpc !== '2.0') return rpcError(hasId ? (msg.id as JsonRpcId) : null, -32600, 'Invalid Request')
+  if (typeof msg.method !== 'string') return null // 客户端发来的响应：无需回复
+  if (!hasId) return null // 通知（如 notifications/initialized）
+  const id = msg.id as JsonRpcId
+  const params = (msg.params ?? {}) as Record<string, unknown>
+  switch (msg.method) {
+    case 'initialize': {
+      const requested = params.protocolVersion
+      const protocolVersion =
+        typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+          ? requested
+          : SUPPORTED_PROTOCOL_VERSIONS[0]
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER_INFO },
+      }
+    }
+    case 'ping':
+      return { jsonrpc: '2.0', id, result: {} }
+    case 'tools/list':
+      return { jsonrpc: '2.0', id, result: { tools: [...registry.values()].map((t) => t.descriptor) } }
+    case 'tools/call': {
+      if (typeof params.name !== 'string' || !registry.has(params.name))
+        return rpcError(id, -32602, 'Unknown tool')
+      const result = await callTool(registry, params.name, params.arguments, {
+        ...base,
+        requestId: crypto.randomUUID(),
+      })
+      return { jsonrpc: '2.0', id, result }
+    }
+    default:
+      return rpcError(id, -32601, 'Method not found')
+  }
+}
 
 export async function handleMcpRequest(
   request: Request,
@@ -257,61 +314,54 @@ export async function handleMcpRequest(
 ): Promise<Response> {
   if (request.method !== 'POST') return new Response(null, { status: 405, headers: { Allow: 'POST' } })
   const origin = request.headers.get('origin')
-  if (origin && origin !== base.env.PUBLIC_ORIGIN) return jsonError(403, -32600, 'Origin not allowed')
+  if (origin && origin !== base.env.PUBLIC_ORIGIN)
+    return jsonResponse(403, rpcError(null, -32600, 'Origin not allowed'))
   if (!ALL_SCOPES.some((s) => base.scopes.has(s))) {
-    return jsonError(403, -32600, 'Insufficient scope', {
+    return jsonResponse(403, rpcError(null, -32600, 'Insufficient scope'), {
       'WWW-Authenticate': challenge(base.env, ['body:read', 'workout:read']),
     })
   }
-  const declared = Number(request.headers.get('content-length') ?? '0')
-  if (declared > MAX_REQUEST_BYTES) return jsonError(413, -32600, 'Request too large')
-  const body = await readLimited(request, MAX_REQUEST_BYTES)
-  if (body === null) return jsonError(413, -32600, 'Request too large')
-
-  const server = new Server(
-    { name: 'kinetrail', version: '0.1.0' },
-    { capabilities: { tools: {} }, jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
-  )
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...registry.values()].map((t) => t.descriptor) as never,
-  }))
-  server.setRequestHandler(CallToolRequestSchema, async (req) =>
-    callTool(registry, req.params.name, req.params.arguments, { ...base, requestId: crypto.randomUUID() }),
-  )
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true,
-  })
-  await server.connect(transport)
-  try {
-    return await transport.handleRequest(
-      new Request(request.url, { method: 'POST', headers: request.headers, body }),
+  const accept = request.headers.get('accept') ?? ''
+  if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+    return jsonResponse(
+      406,
+      rpcError(
+        null,
+        -32000,
+        'Not Acceptable: Client must accept both application/json and text/event-stream',
+      ),
     )
-  } finally {
-    await server.close()
   }
-}
+  const contentType = (request.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase()
+  if (contentType !== 'application/json') {
+    return jsonResponse(
+      415,
+      rpcError(null, -32000, 'Unsupported Media Type: Content-Type must be application/json'),
+    )
+  }
+  const version = request.headers.get('mcp-protocol-version')
+  if (version !== null && !SUPPORTED_PROTOCOL_VERSIONS.includes(version)) {
+    return jsonResponse(400, rpcError(null, -32000, 'Bad Request: Unsupported protocol version'))
+  }
+  if (Number(request.headers.get('content-length') ?? '0') > MAX_REQUEST_BYTES) {
+    return jsonResponse(413, rpcError(null, -32600, 'Request too large'))
+  }
+  const bytes = await readBodyLimited(request.body, MAX_REQUEST_BYTES)
+  if (bytes === null) return jsonResponse(413, rpcError(null, -32600, 'Request too large'))
 
-async function readLimited(request: Request, limit: number): Promise<string | null> {
-  if (!request.body) return ''
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > limit) {
-      await reader.cancel()
-      return null
-    }
-    chunks.push(value)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes))
+  } catch {
+    return jsonResponse(400, rpcError(null, -32700, 'Parse error: Invalid JSON'))
   }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
+  if (Array.isArray(parsed)) {
+    if (parsed.length === 0) return jsonResponse(400, rpcError(null, -32600, 'Invalid Request'))
+    const replies = (await Promise.all(parsed.map((m) => dispatch(m, registry, base)))).filter(
+      (r) => r !== null,
+    )
+    return replies.length === 0 ? new Response(null, { status: 202 }) : jsonResponse(200, replies)
   }
-  return new TextDecoder().decode(bytes)
+  const reply = await dispatch(parsed, registry, base)
+  return reply === null ? new Response(null, { status: 202 }) : jsonResponse(200, reply)
 }

@@ -79,6 +79,34 @@ export function fromB64url(text: string): Uint8Array {
 
 export const randomToken = (size = 32): string => b64url(crypto.getRandomValues(new Uint8Array(size)))
 
+/** 按字节上限读取请求/响应体；超限时取消读取并返回 null。 */
+export async function readBodyLimited(
+  body: ReadableStream<Uint8Array> | null,
+  limit: number,
+): Promise<Uint8Array | null> {
+  if (!body) return new Uint8Array(0)
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > limit) {
+      await reader.cancel()
+      return null
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
 export async function hmacSha256(key: string, data: string): Promise<Uint8Array> {
   const cryptoKey = await crypto.subtle.importKey(
     'raw',

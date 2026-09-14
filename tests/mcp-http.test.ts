@@ -74,6 +74,57 @@ describe('MCP HTTP 边界', () => {
     expect(res.status).toBe(413)
   })
 
+  it('协议面：initialize 版本协商、通知 202、ping、未知方法、解析错误、Accept/Content-Type/版本头校验、批量', async () => {
+    const { access_token } = await issueToken(worker, ['body:read'])
+    const init = await rpc(worker, access_token, 'initialize', {
+      protocolVersion: '2025-06-18',
+      capabilities: {},
+      clientInfo: { name: 't', version: '1' },
+    })
+    expect(init.body.result.protocolVersion).toBe('2025-06-18')
+    expect(init.body.result.capabilities.tools).toBeDefined()
+    const future = await rpc(worker, access_token, 'initialize', { protocolVersion: '2099-01-01' })
+    expect(future.body.result.protocolVersion).toBe('2025-11-25')
+    expect((await rpc(worker, access_token, 'ping')).body.result).toEqual({})
+    expect((await rpc(worker, access_token, 'resources/list')).body.error.code).toBe(-32601)
+    expect((await rpc(worker, access_token, 'tools/call', { name: 'no_such_tool' })).body.error.code).toBe(
+      -32602,
+    )
+
+    const post = (body: string, headers: Record<string, string> = {}) =>
+      dispatch(
+        worker,
+        new Request(`${ORIGIN}/mcp`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${access_token}`,
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream',
+            ...headers,
+          },
+          body,
+        }),
+      )
+    expect((await post(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }))).status).toBe(
+      202,
+    )
+    const parse = await post('{not json')
+    expect(parse.status).toBe(400)
+    expect(((await parse.json()) as { error: { code: number } }).error.code).toBe(-32700)
+    expect((await post('{}', { accept: 'application/json' })).status).toBe(406)
+    expect((await post('{}', { 'content-type': 'text/plain' })).status).toBe(415)
+    expect((await post('{}', { 'mcp-protocol-version': '1999-01-01' })).status).toBe(400)
+    const batch = await post(
+      JSON.stringify([
+        { jsonrpc: '2.0', id: 1, method: 'ping' },
+        { jsonrpc: '2.0', method: 'notifications/initialized' },
+        { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      ]),
+    )
+    const replies = (await batch.json()) as { id: number }[]
+    expect(replies.map((r) => r.id)).toEqual([1, 2])
+  })
+
   it('healthz 只返回存活状态', async () => {
     const res = await dispatch(worker, new Request(`${ORIGIN}/healthz`))
     expect(await res.json()).toEqual({ status: 'alive' })
