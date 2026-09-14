@@ -723,6 +723,59 @@ describe('审查回归：训练历史分页与输入', () => {
     expect(new Set(seen.map((e: Loose) => e.entry_id)).size).toBe(40)
   })
 
+  it('第二轮回归：会话备注很长时历史页连同会话对象计入预算，逐页取回全部会话与条目', async () => {
+    const { ctx } = setup()
+    const notes = '𠀀'.repeat(4096) // 4096 个 4 字节字符，约 16 KB
+    const longText = '完成高位下拉'.repeat(680)
+    const sessions: string[] = []
+    for (let i = 0; i < 6; i++) {
+      const hour = String(8 + i).padStart(2, '0')
+      const r = (
+        await record(ctx, {
+          occurred_at: at(`${hour}:00`),
+          raw_text: `${longText}${i}`,
+          entries: Array.from({ length: 4 }, (_, j) => ({ ...row, exercise_name_raw: `动作${i}-${j}` })),
+        })
+      ).data as Loose
+      await finalizeWorkoutSession(
+        {
+          idempotency_key: key(),
+          expected_revision: 1,
+          session_id: r.session_id,
+          ended_at: at(`${hour}:30`),
+          raw_text: '练完了',
+          notes,
+        },
+        ctx,
+      )
+      sessions.push(r.session_id)
+    }
+    const seenSessions = new Set<string>()
+    const seenEntries = new Set<string>()
+    let cursor: string | undefined
+    do {
+      const page = await getWorkoutHistory({ ...RANGE, ...(cursor ? { cursor } : {}) }, ctx)
+      expect(new TextEncoder().encode(JSON.stringify(page.data)).byteLength).toBeLessThan(250 * 1024)
+      for (const w of page.data as Loose[]) {
+        seenSessions.add(w.session.session_id)
+        for (const e of w.entries) seenEntries.add(e.entry_id)
+        let entryCursor = w.entry_cursor
+        while (entryCursor) {
+          const more = await getWorkoutHistory(
+            { ...RANGE, session_id: w.session.session_id, entry_cursor: entryCursor },
+            ctx,
+          )
+          const [rest] = more.data as Loose[]
+          for (const e of rest.entries) seenEntries.add(e.entry_id)
+          entryCursor = rest.entry_cursor
+        }
+      }
+      cursor = page.nextCursor ?? undefined
+    } while (cursor)
+    expect([...seenSessions].sort()).toEqual([...sessions].sort())
+    expect(seenEntries.size).toBe(24)
+  })
+
   it('原始单位等任意字段带邮箱/URL 时不入库（避免之后历史页被输出检查永久拦截）', async () => {
     const { ctx, ownerId } = setup()
     const error = await record(ctx, {

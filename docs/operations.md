@@ -98,29 +98,33 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT dataset, path, valu
 D1 Time Travel 只能回到近期时间点（免费 7 天、付费 30 天），不是独立备份。独立备份用加密导出：
 
 ```bash
-# 生成一次备份密钥对（在离线/加密卷上保存私钥，不要放进仓库或 Worker）
+# 生成一次加密密钥对（解密私钥离线保存，不要放进仓库、Worker 或备份机）
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out backup-private.pem
 openssl pkey -in backup-private.pem -pubout -out backup-public.pem
+# 生成一次签名密钥对（签名私钥只放在执行备份的机器；公钥随恢复流程保存）
+openssl genpkey -algorithm ed25519 -out backup-signing.pem
+openssl pkey -in backup-signing.pem -pubout -out backup-signing-public.pem
 
-# 每日备份：导出 → AES-256-GCM 加密 → RSA-OAEP 包裹密钥；--prune 保留最近 30 份与每月最后一份（12 个月）
-node scripts/backup.mjs --public-key backup-public.pem --out <加密备份目录> --prune
+# 每日备份：导出 → AES-256-GCM 加密 → RSA-OAEP 包裹密钥 → Ed25519 签名；--prune 保留最近 30 份与每月最后一份（12 个月）
+node scripts/backup.mjs --public-key backup-public.pem --signing-key backup-signing.pem --out <加密备份目录> --prune
 ```
 
-- 备份脚本临时写出明文 SQL 后覆写删除；覆写不保证在 SSD/快照上物理擦除，请在加密卷上运行。
+- 只加密不签名时，拿到公钥的人可以伪造一份能解密的备份；恢复前必须用签名公钥验签，`restore.mjs` 验签失败直接退出。
+- 备份脚本临时写出明文 SQL 后覆写删除，并在每次启动时清扫上次中断留下的 `kinetrail-backup-*` 临时目录；覆写不保证在 SSD/快照上物理擦除，请在加密卷上运行。签名私钥有口令时用 `KINETRAIL_SIGNING_PASSPHRASE`。
 - 备份目录位置由你决定（本机加密卷 + 离站副本）。计划任务（Windows 任务计划程序 / cron）**尚未配置**。
 
 恢复（永远先恢复到隔离数据库）：
 
 ```bash
 npx wrangler d1 create kinetrail-restore
-node scripts/restore.mjs --backup <file.kbak> --private-key backup-private.pem --out restore.sql
+node scripts/restore.mjs --backup <file.kbak> --verify-key backup-signing-public.pem --private-key backup-private.pem --out restore.sql
 npx wrangler d1 execute kinetrail-restore --remote --file restore.sql
 npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore.sql
 ```
 
 `verify-restore.sql` 输出的计数与线上对照，完整性检查全部应为 0。确认后才把 `wrangler.jsonc` 的 `database_id` 切到恢复库并部署；切换会改变线上数据，执行前单独确认。私钥有口令时用环境变量 `KINETRAIL_BACKUP_PASSPHRASE` 传入。
 
-本地演练（2026-09-14 已执行一次，合成数据）：`wrangler d1 migrations apply kinetrail --local` → 写入合成训练事实 → `backup.mjs --local` → `restore.mjs` → 导入 `--persist-to .wrangler/restore-drill` → `verify-restore.sql` 计数一致、完整性 0、禁止删除触发器仍生效。注意 `--persist-to` 指向 8.3 短路径（含 `~1`）的目录时 wrangler 会报 internal error，使用仓库内相对路径。
+本地演练（2026-09-14，合成数据）：`wrangler d1 migrations apply kinetrail --local` → 写入合成训练事实 → `backup.mjs --local` → `restore.mjs` → 导入 `--persist-to .wrangler/restore-drill` → `verify-restore.sql` 计数一致、完整性 0、禁止删除触发器仍生效。加入签名后又演练一次：真实备份验签通过；改动密文 1 字节后验签失败且不输出 SQL；预置的中断残留临时目录被清扫。注意 `--persist-to` 指向 8.3 短路径（含 `~1`）的目录时 wrangler 会报 internal error，使用仓库内相对路径。
 
 ## 6. 凭据轮换
 
@@ -143,7 +147,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | 批次 `partial` | 有记录被阻断或出现未知数据集 | 按第 3 节查询 `blocked_items`；partial 不推进增量检查点 |
 | 读工具 `stale:true` | 15 分钟未成功同步或最近一次同步失败 | 调 `refresh_data`；cron 每 10 分钟处理队列、每 6 小时增量、每 7 天全量 |
 | `SYNC_IN_PROGRESS` | 已有任务或处于冷却（增量 60 秒、全量 24 小时） | 按 `retry_after_seconds` 等待 |
-| `RATE_LIMITED` / HTTP 429 | 读 60/分、写 20/分、`/authorize` 10/分/IP、token 20/分 | 等待；异常增长时检查是否有脚本循环调用 |
+| `RATE_LIMITED` / HTTP 429 | `/mcp` 每 owner 120 次 HTTP 请求/分（含 tools/list 等）；工具读 60/分、写 20/分；`/authorize` 10/分/IP、token 20/分 | 等待；异常增长时检查是否有脚本循环调用 |
 | `REVISION_CONFLICT` | 会话已被其他写入推进 | 先 `get_open_workout_sessions` 读回 revision，确认内容后用**新**幂等键重写 |
 | `COMMIT_STATUS_UNKNOWN` | 提交结果无法确认 | 用同一个 `idempotency_key` 调 `get_write_receipt`，或原样重试；不要换键 |
 | `NEEDS_CLARIFICATION` | 原话含计划/建议/假设/否定/他人等表达 | 先向用户确认已完成，再用确认后的原话记录 |

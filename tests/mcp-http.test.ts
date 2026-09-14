@@ -35,7 +35,22 @@ describe('MCP HTTP 边界', () => {
 
   it('scope 不足：工具结果 isError + mcp/www_authenticate，且不执行处理函数', async () => {
     const { access_token } = await issueToken(worker, ['body:read'])
-    const result = await callTool(worker, access_token, 'record_workout_event', {})
+    // 参数完全合法：只有 scope 检查能挡住它，才能证明处理函数没有执行。
+    const result = await callTool(worker, access_token, 'record_workout_event', {
+      idempotency_key: crypto.randomUUID(),
+      expected_revision: 0,
+      occurred_at: new Date(Date.now() - 60_000).toISOString(),
+      timezone: 'Asia/Shanghai',
+      raw_text: '我已完成高位下拉45kg，12次',
+      completion: 'completed',
+      entries: [
+        {
+          exercise_name_raw: '高位下拉',
+          category: 'strength',
+          sets: [{ load_value: 45, load_unit: 'kg', reps: 12 }],
+        },
+      ],
+    })
     expect(result.isError).toBe(true)
     expect(result.structuredContent.error.code).toBe('INSUFFICIENT_SCOPE')
     expect(result.structuredContent.persistence).toBe('not_committed')
@@ -129,6 +144,34 @@ describe('MCP HTTP 边界', () => {
     )
     const replies = (await batch.json()) as { id: number }[]
     expect(replies.map((r) => r.id)).toEqual([1, 2])
+  })
+
+  it('第二轮回归：批量条数上限、HTTP 层总限流（含 tools/list）', async () => {
+    // 固定时钟，避免 121 次请求恰好跨过分钟窗口导致偶发失败。
+    const limited = createWorker(testDeps({ now: () => 1_789_400_000_000 }))
+    const { access_token } = await issueToken(limited, ['body:read'])
+    const post = (body: unknown) =>
+      dispatch(
+        limited,
+        new Request(`${ORIGIN}/mcp`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${access_token}`,
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream',
+          },
+          body: JSON.stringify(body),
+        }),
+      )
+    const flood = Array.from({ length: 50 }, () => ({ jsonrpc: '2.0', id: 1, method: 'tools/list' }))
+    expect((await post(flood)).status).toBe(400)
+    const statuses: number[] = []
+    for (let i = 0; i < 121; i++)
+      statuses.push((await post({ jsonrpc: '2.0', id: i, method: 'ping' })).status)
+    // 同文件其他用例共用同一 owner 的分钟窗口，所以只断言：达到 120 次后开始限流，且之后一直限流。
+    const firstLimited = statuses.indexOf(429)
+    expect(firstLimited).toBeGreaterThan(90)
+    expect(statuses.slice(firstLimited).every((s) => s === 429)).toBe(true)
   })
 
   it('healthz 只返回存活状态', async () => {

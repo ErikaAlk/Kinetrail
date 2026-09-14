@@ -165,7 +165,7 @@ Kinetrail（身迹）是体测与训练的事实数据库。
 
 **协议与鉴权**
 
-- 支持协议版本 `2025-11-25`、`2025-06-18`、`2025-03-26`、`2024-11-05`；`initialize` 请求其他版本时返回 `2025-11-25`。请求须 `Accept` 同时含 `application/json` 与 `text/event-stream`（否则 406）、`Content-Type: application/json`（否则 415）；`MCP-Protocol-Version` 头不在支持列表时 400。接受 JSON-RPC 批量；只有通知时 202。
+- 支持协议版本 `2025-11-25`、`2025-06-18`、`2025-03-26`、`2024-11-05`；`initialize` 请求其他版本时返回 `2025-11-25`。请求须 `Accept` 同时含 `application/json` 与 `text/event-stream`（否则 406）、`Content-Type: application/json`（否则 415）；`MCP-Protocol-Version` 头不在支持列表时 400。为兼容 2025-03-26 客户端接受 JSON-RPC 批量，但最多 4 条、顺序执行、合计响应超过 256 KiB 时返回 413（其中已提交的写入可凭同一 `idempotency_key` 取回收据）；只有通知时 202。`/mcp` 另有每 owner 每分钟 120 次的 HTTP 层限流（429），覆盖不经过工具限流的 tools/list、initialize、ping。
 - Protected resource metadata 与 401 challenge 的 `scope` 为 `body:read workout:read`（首连所需的两个读 scope）。
 - HTTP 403 `insufficient_scope` 只用于 token 不含四个 scope 中任何一个的情况；单个工具 scope 不足时返回 HTTP 200 的工具结果：`isError:true`、`error.code=INSUFFICIENT_SCOPE`、`_meta["mcp/www_authenticate"]`，challenge 的 `scope` 为“当前 scope ∪ 工具所需 scope”，避免重新授权后丢失已有读权限。宿主是否据此弹出重新授权属 G4 未验证。
 - 授权页：所有客户端（包括机密客户端）都必须 PKCE S256；`resource` 若提供必须精确等于 `<origin>/mcp`；未知 scope 回 `invalid_scope`。`OWNER_OIDC_SUB` 为空时进入绑定模式（只显示登录者自己的 sub，不签发）。

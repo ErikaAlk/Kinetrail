@@ -1177,7 +1177,17 @@ export async function getWorkoutHistory(args: HistoryArgs, ctx: ToolContext): Pr
       lastSession = session
       continue
     }
-    // 条目数与字节双重预算：raw_text 每条都带一份，只按条数分页会让整页超过响应上限。
+    // 条目数与字节双重预算：会话对象（notes 可达 4096 字）与每条 raw_text 都计入，避免整页超过响应上限。
+    const sessionView = toSession(
+      session,
+      session.status === 'open' && (open.length > 1 || !autoEligible(session, now)),
+    )
+    const sessionSize = byteLength(JSON.stringify(sessionView)) + 2048 // 另留 entry_cursor 与外壳的余量
+    if (workouts.length > 0 && bytesUsed + sessionSize > PAGE_BYTE_BUDGET) {
+      more = true
+      break
+    }
+    bytesUsed += sessionSize
     const page: EntryVersionRow[] = []
     const items = []
     for (const row of matching) {
@@ -1218,10 +1228,7 @@ export async function getWorkoutHistory(args: HistoryArgs, ctx: ToolContext): Pr
           )
         : null
     workouts.push({
-      session: toSession(
-        session,
-        session.status === 'open' && (open.length > 1 || !autoEligible(session, now)),
-      ),
+      session: sessionView,
       entries: items,
       entries_complete: complete,
       entry_cursor: entryCursor,

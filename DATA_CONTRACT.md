@@ -212,7 +212,8 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 - 秘密键：标准化键名（小写、去掉非字母数字）命中 token/password/secret/cookie/authorization/openid/unionid/email/phone/mobile/apikey/signature/credential 子串，或等于 account、mac、sn、ssid、ip、birthday、photo、remark_name 等。整个字段移除，路径记入 `redacted_paths_json`；键名本身像秘密时路径写 `<redacted-key>`。
 - 可疑值：Bearer、JWT、邮箱、任何 URL、MAC；未知字段中的手机号形态（去空格/括号/连字符，允许 +86/0086/86 前缀，字符串和数字都查）。已知字段（上游类型里的 ID/时间/来源类）不做手机号形态判断，避免误删 ID。
 - 已知秘密值精确/子串匹配：登录名、密码、FitDays 等价密码摘要、登录返回的 token/refresh token，以及登录响应与同步响应 `account` 中**认证/联系方式类键**下的值（普通字段如 updated_at 不收集）。
-- 未知字段里的字符串只接受空串、数字、数字列表、日期时间形态，其他一律 `UNCLASSIFIED_STRING` 阻断整条；JSON 样字符串能解析时递归检查，不能解析但出现秘密键名时 `SECRET_IN_UNPARSEABLE_STRING` 阻断。ext_data 不能解析但不含秘密时原串保留、`parse_status=invalid`。
+- 未知字段里的字符串只接受空串、数字、数字列表、日期时间形态，其他一律 `UNCLASSIFIED_STRING` 阻断整条；JSON 样字符串能解析时递归检查。
+- 不能解析的 JSON 样字符串（含 ext_data）按同一规则逐段判断：带引号的键不能是秘密键；带引号的值必须是安全形态（ext_data 的已知字符串键除外）；引号外只允许 JSON 标点、数字、true/false/null 和 12 个字母以内的单词。能确认安全时原串保留、`parse_status=invalid`（如 `{invalid`、`{"deviceNameExt":"客厅秤","smi":7.1`），否则 `SECRET_IN_UNPARSEABLE_STRING` 阻断整条。
 - `__proto__`、`constructor` 等键按普通数据保留。
 
 **身份、时间与索引**

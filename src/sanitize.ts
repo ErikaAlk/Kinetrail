@@ -91,11 +91,45 @@ const CN_PHONE = /^(\+?86)?1[3-9]\d{9}$/
 /** 去掉空格、括号、连字符并把 00 国际前缀当作 +，再判断是否像中国大陆手机号。 */
 const phoneLike = (text: string) => CN_PHONE.test(text.replace(/[\s()-]/g, '').replace(/^00/, '+'))
 
-const KEY_IN_TEXT = /["']?([A-Za-z_][A-Za-z0-9_-]{1,63})["']?\s*[:=]/g
-/** 无法解析的 JSON 样字符串里是否出现秘密键名（如截断的 `{"refresh_token":"..."`）。 */
+const QUOTED_KEY = /["']([^"']{1,64})["']\s*:/g
+/** 文本里是否出现带引号的秘密键名（如截断的 `{"refresh_token":"..."`）。用于写入输入与输出检查。 */
 export function secretKeyInText(text: string): boolean {
-  for (const match of text.matchAll(KEY_IN_TEXT)) if (isSecretKey(match[1] as string)) return true
+  for (const match of text.matchAll(QUOTED_KEY)) if (isSecretKey(match[1] as string)) return true
   return false
+}
+
+const STRING_LITERAL = /"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g
+
+/**
+ * 采集时对“JSON 样但无法解析”的字符串做 fail-closed 判断，与能解析时的规则保持一致：
+ * 带引号的键不能是秘密键；带引号的值必须是安全形态（已知字符串键除外）；
+ * 引号外只允许 JSON 标点、数字、true/false/null 和不含数字的短单词（如 `{invalid`）。
+ */
+export function unparseableSafe(text: string, knownStringKeys: ReadonlySet<string>): boolean {
+  let lastKey: string | null = null
+  let outside = ''
+  let cursor = 0
+  for (const match of text.matchAll(STRING_LITERAL)) {
+    outside += `${text.slice(cursor, match.index)} `
+    cursor = match.index + match[0].length
+    const content = match[1] ?? match[2] ?? ''
+    if (/^\s*:/.test(text.slice(cursor))) {
+      if (isSecretKey(content) || isSuspiciousValue(content, undefined, false)) return false
+      lastKey = content
+      continue
+    }
+    const known = lastKey !== null && knownStringKeys.has(lastKey)
+    lastKey = null
+    if (isSuspiciousValue(content, undefined, false)) return false
+    if (!known && !SAFE_SHAPES.some((re) => re.test(content.trim()))) return false
+  }
+  outside += text.slice(cursor)
+  for (const token of outside.match(/[^\s{}[\],:]+/g) ?? []) {
+    if (/^(true|false|null)$/.test(token) || /^[A-Za-z]{1,12}$/.test(token)) continue
+    if (SAFE_SHAPES.some((re) => re.test(token))) continue
+    return false
+  }
+  return true
 }
 
 /** 以自有属性写入，避免 `__proto__` 等键被当成原型访问器（数据丢失或原型污染）。 */
@@ -236,7 +270,7 @@ function walkString(value: string, path: string, allowed: boolean, ctx: Walk): u
       const inner = walk(parsed, path, false, ctx)
       return ctx.redacted.length === before ? value : JSON.stringify(inner)
     }
-    if (secretKeyInText(value)) {
+    if (!unparseableSafe(value, new Set())) {
       ctx.blocked.push({ path, valueType: 'string', code: 'SECRET_IN_UNPARSEABLE_STRING' })
       return value
     }
@@ -303,8 +337,8 @@ function sanitizeExt(item: unknown, ctx: Walk): { value: unknown; status: ExtPar
   try {
     parsed = parseLossless(item)
   } catch {
-    // 无法解析：原串保留（解析失败不丢 raw），但含秘密值或秘密键名时无法重建，只能整条阻断。
-    if (isSuspiciousValue(item, ctx.secrets) || secretKeyInText(item)) {
+    // 无法解析：能确认内容安全时原串保留（解析失败不丢 raw）；含秘密或无法分类的内容时无法重建，只能整条阻断。
+    if (isSuspiciousValue(item, ctx.secrets) || !unparseableSafe(item, EXT_STRING_KEYS)) {
       ctx.blocked.push({ path: 'ext_data', valueType: 'string', code: 'SECRET_IN_UNPARSEABLE_STRING' })
       return { value: REMOVE, status: 'blocked', parsed: null }
     }

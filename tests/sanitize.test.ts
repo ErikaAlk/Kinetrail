@@ -81,6 +81,20 @@ describe('秘密边界', () => {
     expect(findSecretPath({ note: '{"bfr":20' })).toBeNull()
   })
 
+  it('第二轮回归：无法解析但含不透明值的 ext_data 同样 fail-closed；安全的截断内容保留；训练原话不误报', () => {
+    for (const truncated of [
+      '{"session":"9f8e7d6c5b4a3f2e1d0c"',
+      '{"auth.bearer":"rt-opaque-value-123"',
+      '{"x":1, abcdef12345',
+    ]) {
+      expect(clean(JSON.stringify({ data_id: 'w', ext_data: truncated })).blocked, truncated).toHaveLength(1)
+    }
+    const kept = clean(JSON.stringify({ data_id: 'w', ext_data: '{"deviceNameExt":"客厅秤","smi":7.1' }))
+    expect(kept.blocked).toEqual([])
+    expect(kept.extStatus).toBe('invalid')
+    expect(findSecretPath({ raw_text: '[1号机] SN: 1024 我已完成推胸' })).toBeNull()
+  })
+
   it('审查回归：带空格/国际前缀的手机号、数字型手机号与已知秘密值被移除；已知数字字段不误伤', () => {
     const r = sanitizeRecord(
       parseLossless(

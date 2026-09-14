@@ -15,6 +15,7 @@ export interface CallToolResult {
 
 export const MAX_REQUEST_BYTES = 64 * 1024
 export const MAX_RESPONSE_BYTES = 256 * 1024
+export const MAX_BATCH = 4
 export const ALL_SCOPES: Scope[] = ['body:read', 'body:sync', 'workout:read', 'workout:write']
 
 export interface Deps {
@@ -346,6 +347,15 @@ export async function handleMcpRequest(
   if (Number(request.headers.get('content-length') ?? '0') > MAX_REQUEST_BYTES) {
     return jsonResponse(413, rpcError(null, -32600, 'Request too large'))
   }
+  try {
+    // HTTP 层总限流：tools/list、initialize、ping 等不经过工具级限流的方法也计数。
+    await consumeRateLimit(base.env.DB, `mcp:http:${base.ownerId}`, 120, 60, base.deps.now())
+  } catch (error) {
+    if (!(error instanceof KtError)) throw error
+    return jsonResponse(429, rpcError(null, -32000, 'Rate limited'), {
+      'Retry-After': String(error.options.retryAfterSeconds ?? 60),
+    })
+  }
   const bytes = await readBodyLimited(request.body, MAX_REQUEST_BYTES)
   if (bytes === null) return jsonResponse(413, rpcError(null, -32600, 'Request too large'))
 
@@ -356,11 +366,25 @@ export async function handleMcpRequest(
     return jsonResponse(400, rpcError(null, -32700, 'Parse error: Invalid JSON'))
   }
   if (Array.isArray(parsed)) {
-    if (parsed.length === 0) return jsonResponse(400, rpcError(null, -32600, 'Invalid Request'))
-    const replies = (await Promise.all(parsed.map((m) => dispatch(m, registry, base)))).filter(
-      (r) => r !== null,
-    )
-    return replies.length === 0 ? new Response(null, { status: 202 }) : jsonResponse(200, replies)
+    // 批量只为兼容 2025-03-26 客户端保留，且限制条数、顺序执行、合计响应不超过单次上限，防止放大。
+    if (parsed.length === 0 || parsed.length > MAX_BATCH) {
+      return jsonResponse(400, rpcError(null, -32600, 'Invalid Request: batch size'))
+    }
+    const replies: object[] = []
+    for (const message of parsed) {
+      const reply = await dispatch(message, registry, base)
+      if (reply !== null) replies.push(reply)
+    }
+    if (replies.length === 0) return new Response(null, { status: 202 })
+    const body = JSON.stringify(replies)
+    if (byteLength(body) > MAX_RESPONSE_BYTES) {
+      // 其中的写入若已提交，可用同一个 idempotency_key 取回收据。
+      return jsonResponse(413, rpcError(null, -32600, 'Batch response too large; send requests individually'))
+    }
+    return new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    })
   }
   const reply = await dispatch(parsed, registry, base)
   return reply === null ? new Response(null, { status: 202 }) : jsonResponse(200, reply)
