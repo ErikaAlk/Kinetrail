@@ -74,7 +74,7 @@ describe('秘密边界', () => {
   })
 
   it('审查回归：截断的 ext_data 里出现秘密键名时整条阻断，输出检查也能发现', () => {
-    const truncated = '{"refresh_token":"rt-other-device-9f8e7d6c5b4a","bfr":20'
+    const truncated = '{"refresh_token":"rt-other-device-9f8e7d6c5b4a","bfr":20' // SYNTHETIC-SECRET
     const r = clean(JSON.stringify({ data_id: 'w', ext_data: truncated }))
     expect(r.blocked[0]?.code).toBe('SECRET_IN_UNPARSEABLE_STRING')
     expect(findSecretPath({ raw_json: JSON.stringify({ ext_data: truncated }) })).toBe('raw_json.ext_data')
