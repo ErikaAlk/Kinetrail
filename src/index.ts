@@ -1,6 +1,7 @@
 // Worker 入口：OAuth Provider 包住 /mcp；其余路由为授权页、健康检查；cron 负责同步队列与定期刷新。
 
 import { OAuthProvider, type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider'
+import { handleAuthRoutes, purgeAuthPending } from './auth'
 import { buildRegistry, type Deps, handleMcpRequest, resourceMetadataUrl, resourceUrl } from './mcp'
 import { consumeRateLimit, purgeRateLimits } from './ratelimit'
 import { scheduledSync } from './sync'
@@ -64,10 +65,11 @@ export function createWorker(deps: Deps) {
   }
 
   const defaultHandler = {
-    async fetch(request: Request): Promise<Response> {
+    async fetch(request: Request, env: Env): Promise<Response> {
       const url = new URL(request.url)
       if (url.pathname === '/healthz') return Response.json({ status: 'alive' })
-      return new Response('Not found', { status: 404 })
+      const auth = await handleAuthRoutes(request, env, deps)
+      return auth ?? new Response('Not found', { status: 404 })
     },
   }
 
@@ -107,6 +109,7 @@ export function createWorker(deps: Deps) {
       ctx.waitUntil(
         (async () => {
           await purgeRateLimits(env.DB, deps.now())
+          await purgeAuthPending(env.DB, deps.now())
           await scheduledSync(env, deps)
         })(),
       )

@@ -13,7 +13,11 @@ const RULES = [
   ['jwt', /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/],
   [
     'secret-assignment',
-    /\b(FITDAYS_PASSWORD|FITDAYS_LOGIN|ACCESS_CLIENT_SECRET|CURSOR_SIGNING_KEY)\s*[=:]\s*["']?(?!["'<]|\$|\s|process|env|undefined)[^\s"',]{6,}/,
+    /\b(FITDAYS_PASSWORD|FITDAYS_LOGIN|ACCESS_CLIENT_SECRET|CURSOR_SIGNING_KEY)\s*[=:]\s*(["'`])(?!<|\$\{)[^"'`\s]{6,}\2/,
+  ],
+  [
+    'env-assignment',
+    /\b(FITDAYS_PASSWORD|FITDAYS_LOGIN|ACCESS_CLIENT_SECRET|CURSOR_SIGNING_KEY)=(?!<|\$)[^\s"'`]{6,}/,
   ],
   [
     'json-credential',
