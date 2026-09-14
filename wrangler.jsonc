@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kinetrail",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-14",
+  // nodejs_compat：fitdays-api 需要 node:crypto；global_fetch_strictly_public：CIMD 抓取不得访问内网。
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // 部署前替换为真实资源 ID，见 docs/operations.md。占位值只用于本地测试。
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kinetrail",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "00000000000000000000000000000000" }],
+  "triggers": { "crons": ["*/10 * * * *"] },
+  // 不记录调用日志（含请求 URL/query）；应用日志只写脱敏字段。
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
+  "vars": {
+    "PUBLIC_ORIGIN": "https://kinetrail.example.invalid",
+    "OWNER_ID": "owner",
+    "FITDAYS_HISTORY_START": "2018-01-01T00:00:00+08:00",
+    "ACCESS_OIDC_ISSUER": "",
+    "ACCESS_OIDC_AUTHORIZATION_ENDPOINT": "",
+    "ACCESS_OIDC_TOKEN_ENDPOINT": "",
+    "ACCESS_OIDC_JWKS_URL": "",
+    "ACCESS_CLIENT_ID": "",
+    "OWNER_OIDC_SUB": ""
+  }
+}

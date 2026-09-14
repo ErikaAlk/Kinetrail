@@ -1,0 +1,32 @@
+{
+  "name": "kinetrail",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types --strict-vars false",
+    "test": "vitest run",
+    "scan": "node scripts/scan-secrets.mjs",
+    "check": "npm run lint && npm run typecheck && npm test && npm run scan"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "4.1.1",
+    "@cloudflare/workers-oauth-provider": "0.10.3",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "fitdays-api": "1.0.4",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.13",
+    "@cloudflare/vitest-plugin": "1.1.9",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.131.2"
+  }
+}
