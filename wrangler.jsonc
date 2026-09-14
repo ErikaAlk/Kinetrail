@@ -18,7 +18,10 @@
     }
   ],
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "30800a8f19c0417aac3121f080ba8850" }],
+  // 本账户 cron 注册成功却从不投递（2026-09-14 实测），同步调度由 SyncScheduler 的 alarm 驱动；cron 保留，恢复后两边经 lease 互斥。
   "triggers": { "crons": ["*/10 * * * *"] },
+  "durable_objects": { "bindings": [{ "name": "SYNC_SCHEDULER", "class_name": "SyncScheduler" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncScheduler"] }],
   // 不记录调用日志（含请求 URL/query）；应用日志只写脱敏字段。
   "observability": { "enabled": true, "logs": { "invocation_logs": false } },
   "vars": {
