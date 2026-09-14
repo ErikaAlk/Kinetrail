@@ -20,7 +20,7 @@
 | 3 真实身份与远程 MCP | 代码完成；合成 IdP 验证 | `tests/auth.test.ts`、`research/production-inspector-results.json`；真实 Access/CIMD/ChatGPT（G3）未验证 |
 | 4 真实 CN 与平台容量（G1/G2） | 未开始 | 需要部署与 FitDays Secrets；操作步骤见 `docs/operations.md` 第 3 节 |
 | 5 “减肥计划”两聊天（G4/G5） | 未开始 | 需要部署后的 endpoint 与项目链接 |
-| 6 部署交付 | 2026-09-14 已部署到 `kinetrail.erikaalk.click`，匿名冒烟通过；本人绑定与 FitDays secrets 待设置 | `docs/operations.md`、`scripts/backup.mjs`/`restore.mjs`/`verify-restore.sql`（本地演练通过）、`THIRD_PARTY_NOTICES.md` |
+| 6 部署交付 | 2026-09-14 已部署到 `kinetrail.erikaalk.click`，匿名冒烟通过；本人绑定与 FitDays secrets 已设置 | `docs/operations.md`、`scripts/backup.mjs`/`restore.mjs`/`verify-restore.sql`（本地演练通过）、`THIRD_PARTY_NOTICES.md` |
 
 每个阶段结束都运行了 `npm run check`（lint、typecheck、测试、秘密扫描），并对关键守卫做了变异检查（临时撤掉守卫确认对应测试变红后恢复）。实现阶段的架构变更记录在 ARCHITECTURE_DECISION 文末，契约细化记录在 DATA_CONTRACT 第 7 节与 MCP_CONTRACT 第 7 节。
 

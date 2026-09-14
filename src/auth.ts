@@ -411,6 +411,8 @@ async function callback(
   return page(200, '授权连接 Kinetrail', body, {
     // 表单提交后的 302 需要目标回调 origin 在 form-action 白名单中。
     'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${redirect.origin}; frame-ancestors 'none'`,
+    // no-referrer 会让浏览器对表单 POST 发送 `Origin: null`，/consent 的 Origin 校验无法通过；same-origin 跨源仍不带 referrer。
+    'referrer-policy': 'same-origin',
   })
 }
 

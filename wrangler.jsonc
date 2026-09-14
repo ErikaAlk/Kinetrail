@@ -30,6 +30,6 @@
     "ACCESS_OIDC_TOKEN_ENDPOINT": "https://erikaalk.cloudflareaccess.com/cdn-cgi/access/sso/oidc/ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610/token",
     "ACCESS_OIDC_JWKS_URL": "https://erikaalk.cloudflareaccess.com/cdn-cgi/access/sso/oidc/ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610/jwks",
     "ACCESS_CLIENT_ID": "ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610",
-    "OWNER_OIDC_SUB": ""
+    "OWNER_OIDC_SUB": "777b3d5e-dc53-50ea-81b5-329d561ca0cc"
   }
 }
