@@ -1,0 +1,11 @@
+**/node_modules/
+**/.local/
+.env*
+.dev.vars*
+*.db
+*.db-wal
+*.db-shm
+secrets/
+.wrangler/
+*.kbak
+*.sql.tmp

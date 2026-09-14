@@ -1,0 +1,51 @@
+{
+  "provenance": "synthetic; not a real user workout",
+  "events": [
+    {
+      "key": "fixture-1",
+      "raw_text": "我已完成高位下拉45kg，12、12、10次",
+      "completion": "completed",
+      "entry": {
+        "exercise_name_raw": "高位下拉",
+        "equipment_label": "测试器械A",
+        "category": "strength",
+        "sets": [
+          { "load_value": 45, "load_unit": "kg", "reps": 12 },
+          { "load_value": 45, "load_unit": "kg", "reps": 12 },
+          { "load_value": 45, "load_unit": "kg", "reps": 10 }
+        ]
+      }
+    },
+    {
+      "key": "fixture-2",
+      "raw_text": "刚做完坐姿划船，40kg 12次、45kg 10次",
+      "completion": "completed",
+      "entry": {
+        "exercise_name_raw": "坐姿划船",
+        "equipment_label": "测试器械B",
+        "category": "strength",
+        "sets": [
+          { "load_value": 40, "load_unit": "kg", "reps": 12 },
+          { "load_value": 45, "load_unit": "kg", "reps": 10 }
+        ]
+      }
+    },
+    {
+      "key": "fixture-3",
+      "raw_text": "跑步机已跑完20分钟，3公里，坡度2%",
+      "completion": "completed",
+      "entry": {
+        "exercise_name_raw": "跑步机",
+        "equipment_label": "测试跑步机",
+        "category": "cardio",
+        "sets": [{ "duration_seconds": 1200, "distance_value": 3, "distance_unit": "km", "incline_pct": 2 }]
+      }
+    },
+    {
+      "key": "fixture-plan",
+      "raw_text": "明天准备深蹲5×5",
+      "completion": "planned",
+      "entry": { "exercise_name_raw": "深蹲", "category": "strength", "sets": [{ "reps": 5 }] }
+    }
+  ]
+}

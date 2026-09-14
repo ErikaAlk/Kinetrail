@@ -1,0 +1,24 @@
+{
+  "runtime": "v22.23.2",
+  "fitdays": {
+    "runtime": "v22.23.2",
+    "counts": {
+      "weight_list": 4,
+      "impedance_list": 2,
+      "hr_list": "null",
+      "balance_list": 1,
+      "gravity_list": 1,
+      "height_list": "missing",
+      "rulers_list": 0,
+      "skip_list": 0
+    },
+    "fixture_bytes": 1055,
+    "max_record_bytes": 331
+  },
+  "inspector": {
+    "tools_list": true,
+    "tools_call": true
+  },
+  "docker": false,
+  "node_oauth": false
+}

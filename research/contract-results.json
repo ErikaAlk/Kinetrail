@@ -1,0 +1,20 @@
+{
+  "tools": 19,
+  "compiled_input_output_schemas": 38,
+  "negative_cases": [
+    "planned",
+    "owner injection",
+    "short idempotency key",
+    "negative reps",
+    "read implicit refresh",
+    "account dataset",
+    "missing receipt event id"
+  ],
+  "review_regressions": [
+    "session summary",
+    "unknown unit and assistance",
+    "normalized output",
+    "current revision"
+  ],
+  "runtime_semantics": "schema-only; production cross-field checks remain required"
+}
