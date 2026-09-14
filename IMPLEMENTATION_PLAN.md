@@ -10,6 +10,20 @@
 - 平台：Worker 为实现目标，有条件保留 Node 22 Docker 回退；不得用“真实未验证”误写成 Worker 已通过全量生产验收。
 - 依赖锁：`research/spike/package-lock.json` 是测试锁，不等于生产 lock；选择生产依赖时从实际导出 API 验证，不照搬 upstream main 未发布方法。
 
+## 实施进度（2026-09-14，Opus 5）
+
+| 阶段 | 状态 | 验证证据 |
+| --- | --- | --- |
+| 0 结构与契约闭合 | 完成 | `tests/contract.test.ts`：TS schema 与 `research/mcp-schemas.json` 完全一致；实际 tools/list 的 annotations/securitySchemes；bundle 无 eval |
+| 1 fixture 驱动测量链 | 完成（合成数据） | `tests/fitdays.test.ts`、`sanitize.test.ts`、`measurements.test.ts`、`body-tools.test.ts` |
+| 2 训练事务与查询 | 完成（workerd D1） | `tests/workouts.test.ts`、`trends.test.ts`；云端 D1 事务未测 |
+| 3 真实身份与远程 MCP | 代码完成；合成 IdP 验证 | `tests/auth.test.ts`、`research/production-inspector-results.json`；真实 Access/CIMD/ChatGPT（G3）未验证 |
+| 4 真实 CN 与平台容量（G1/G2） | 未开始 | 需要部署与 FitDays Secrets；操作步骤见 `docs/operations.md` 第 3 节 |
+| 5 “减肥计划”两聊天（G4/G5） | 未开始 | 需要部署后的 endpoint 与项目链接 |
+| 6 部署交付 | 文档与工具完成；未部署 | `docs/operations.md`、`scripts/backup.mjs`/`restore.mjs`/`verify-restore.sql`（本地演练通过）、`THIRD_PARTY_NOTICES.md` |
+
+每个阶段结束都运行了 `npm run check`（lint、typecheck、测试、秘密扫描），并对关键守卫做了变异检查（临时撤掉守卫确认对应测试变红后恢复）。实现阶段的架构变更记录在 ARCHITECTURE_DECISION 文末，契约细化记录在 DATA_CONTRACT 第 7 节与 MCP_CONTRACT 第 7 节。
+
 ## 本轮可运行检查
 
 在 `research/spike` 执行（不包含任何真实 Secret）：

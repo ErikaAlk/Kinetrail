@@ -158,3 +158,40 @@ Kinetrail（身迹）是体测与训练的事实数据库。
 ```
 
 需记录两聊天真实选择来源/授权/审批行为；本轮只确定该测试契约，**未验证**项目 instructions 会自动驱动所有调用。Annotations 不能强制宿主无确认执行，用户拒绝写入时不得绕过。[ChatGPT 接入测试](https://developers.openai.com/plugins/deploy/connect-chatgpt)、[Projects](https://learn.chatgpt.com/docs/projects)
+
+## 7. 实现细化（2026-09-14，Opus 5）
+
+以下是在契约允许范围内的具体取值与行为，schema（`research/mcp-schemas.json`）未改动。
+
+**协议与鉴权**
+
+- 支持协议版本 `2025-11-25`、`2025-06-18`、`2025-03-26`、`2024-11-05`；`initialize` 请求其他版本时返回 `2025-11-25`。请求须 `Accept` 同时含 `application/json` 与 `text/event-stream`（否则 406）、`Content-Type: application/json`（否则 415）；`MCP-Protocol-Version` 头不在支持列表时 400。接受 JSON-RPC 批量；只有通知时 202。
+- Protected resource metadata 与 401 challenge 的 `scope` 为 `body:read workout:read`（首连所需的两个读 scope）。
+- HTTP 403 `insufficient_scope` 只用于 token 不含四个 scope 中任何一个的情况；单个工具 scope 不足时返回 HTTP 200 的工具结果：`isError:true`、`error.code=INSUFFICIENT_SCOPE`、`_meta["mcp/www_authenticate"]`，challenge 的 `scope` 为“当前 scope ∪ 工具所需 scope”，避免重新授权后丢失已有读权限。宿主是否据此弹出重新授权属 G4 未验证。
+- 授权页：所有客户端（包括机密客户端）都必须 PKCE S256；`resource` 若提供必须精确等于 `<origin>/mcp`；未知 scope 回 `invalid_scope`。`OWNER_OIDC_SUB` 为空时进入绑定模式（只显示登录者自己的 sub，不签发）。
+
+**体测读取**
+
+- 关联状态：真实 CN 外键规则核实前（`JOIN_RULES_VERIFIED=false`），唯一匹配也报 `unverified`；多匹配 `ambiguous` 并列出全部候选；外键为空、`""` 或 `"0"` 时 `not_applicable`。附属记录与主记录同 profile，或附属记录缺 suid（`p_unknown`）时才参与匹配。
+- 内联上限：单条 raw 超过 64 KiB 只给 `chunk_ref`；ext_data 超过 32 KiB 时 `ext_data_raw`/`ext_data_parsed` 为 null、`complete:false`；同一次体测的关联记录共享 64 KiB 内联预算，超出部分只给 `chunk_ref`。
+- `get_raw_dataset`：没有 measured_time 的记录出现在每个时间范围查询中，排在有时间的记录之后并带 `measured_time_missing`。
+- 同步 `coverage`：真实分窗/截断/端点行为核实前只会是 `unknown`（完整发布）或 `partial`（有阻断或未知数据集），不会写 `verified_window`。
+- `list_profiles` 的 `label` 取 FitDays 成员昵称，没有或形态可疑时为 `未命名成员`。
+- `refresh_data`：FitDays 凭据未配置时直接 `FITDAYS_LOGIN_FAILED`，不创建任务。冷却：增量 60 秒、首次全量（没有检查点，含首批失败或 partial 后）10 分钟、校准全量 24 小时。
+
+**趋势**
+
+- `get_trend` 的 `group_key`：`period` 周期值；`ma7` 最近 7 个日历日均值（仅 day，有效日少于 4 天标 `sparse_window`）；`pop_change` / `pop_change_pct` 与上一完整日历周期比较（仅 week/month，附 `previous_valid_days:N`，上期均值为 0 时百分比 null 并标 `previous_zero`）。被区间截断的周期标 `partial_period`。`missing_count` 为周期内缺该指标的测量次数。bfr≤0 视为未测体脂，不参与体脂率、脂肪量、去脂体重。
+- `get_training_trend` 的 `group_key`：`all` 为总体（sessions、training_days、working_sets、warmup_sets、volume_kg、cardio_duration_seconds、cardio_distance_m）；`series:<动作>|<场馆>|<器械>|<负重口径>` 为力量序列（volume_kg、working_sets、best_load_kg、e1rm_epley_kg）。器械未知时键里带会话 ID 并标 `equipment_unknown_not_comparable`；键超过 128 字符时改为 `series:h:<64 位哈希>`，可读部分放在 `quality_flags`（`exercise:`/`facility:`/`equipment:`/`basis:`）。总体 `volume_kg` 只统计未标注或 `total_external` 口径且有 kg 与次数的非热身组（标 `external_load_only`）。
+- 点数超过 1000 返回 `INVALID_RANGE`；趋势工具不分页，传入 `cursor` 返回 `CURSOR_INVALID`。
+
+**训练写入与历史**
+
+- `start_workout_session`：`expected_revision` 必须为 0（否则 `INVALID_INPUT`）；原话含未来/建议/假设/否定/他人表达时 `NEEDS_CLARIFICATION`。
+- `record_workout_event`：服务端规则检查六类表达（未来、意图、建议、假设、否定、他人），命中即 `NEEDS_CLARIFICATION` 且不写入；“准备组/准备活动”不算意图。已知误报方向是“多问一次”，不会误写。空组（只有 RPE/备注等）`INVALID_INPUT`；数值与单位不成对 `INVALID_UNIT`；完成时间晚于服务端时间 5 分钟以上 `INVALID_INPUT`。
+- 会话自动选择：省略 `session_id` 时，没有 open 会话则新建（`expected_revision` 须为 0）；恰好一个且最近活动 ≤12 小时、开始 ≤18 小时、场馆不冲突时追加（`expected_revision` 须等于其 revision）；多个 `SESSION_AMBIGUOUS`；其他 `SESSION_SELECTION_REQUIRED`。完成时间早于会话开始 1 小时以上时，即使指定了 `session_id` 也拒绝（补录请先 `start_workout_session` 建对应会话）。
+- 不同键、相同原话写入同一会话时照常保存，`content` 文本提示疑似重复。
+- `reopen_workout_session` 对 open 会话返回 `INVALID_INPUT`。
+- 任何写入字段出现邮箱、URL、JWT、MAC 等形态时 `SENSITIVE_PAYLOAD_BLOCKED`（与读工具输出检查同一规则）。
+- `get_write_receipt` 查不到时 `status:"empty"`、`data:null`。
+- `get_workout_history`：`limit` 最大 20（超出 `INVALID_INPUT`）；一页最多 100 条条目且约 200 KiB；会话条目未读完时 `entries_complete:false` 并给 `entry_cursor`，续读须同时传同一个 `session_id`；按 `exercise_id`/`equipment_ref` 筛选时被筛掉的会话也推进 `next_cursor`，一页可能为空但仍有下一页。

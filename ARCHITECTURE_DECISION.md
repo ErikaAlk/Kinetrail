@@ -1,6 +1,6 @@
 # Kinetrail（身迹）架构决策
 
-日期：2026-09-14。状态：**离线研究定案；真实数据与上线资格未验证**。
+日期：2026-09-14。状态：**离线研究定案；阶段 0–3 已按本决策实现并在本地 workerd 验证；真实数据与上线资格（G1–G5）未验证**。实现阶段的变更见文末“实现阶段变更”。
 
 本轮完整阅读原任务书。文档中的建议和历史“已核实”陈述作为待检验材料，不作为已执行授权。用户随后明确：真实凭据尚未配置，先交付离线 spike、fixture 驱动测试与架构文档，保留真实验证 gate；目标 ChatGPT Project 是“减肥计划”。本轮未部署、未登录 FitDays、未接触真实健康数据，也未编写生产服务。
 
@@ -28,7 +28,7 @@ flowchart LR
 | 组件 | 决定 | 放弃项与理由 |
 | --- | --- | --- |
 | FitDays | 固定 `fitdays-api@1.0.4`，自有小适配层注入 `fetchImpl`，调用公共 `request()`；不 fork | 不 fork 两个仓库，不延续摘要/内存缓存/stdio 子进程体系；现有扩展点够用 |
-| MCP | 直接用 SDK 的 Web Standard Streamable HTTP；V1 无 UI | 不使用 supergateway 和常驻子进程；不引入 Agents、Durable Object 仅为协议包装 |
+| MCP | ~~直接用 SDK 的 Web Standard Streamable HTTP~~ 实现阶段改为自带无状态 JSON-RPC 处理（见文末）；V1 无 UI | 不使用 supergateway 和常驻子进程；不引入 Agents、Durable Object 仅为协议包装 |
 | 数据库 | D1 保存测量版本、批次、索引、训练版本/事件/幂等结果 | KV 最终一致性不适合事实、锁或幂等；不从 KV 读取即时训练结果 |
 | KV | 仅 Provider 所需 `OAUTH_KV` | 不存 FitDays 密码、邮箱、token；OAuth 状态属于独立受保护域，不属于 raw_records |
 | R2 | 暂不需要 | 原始记录超出 D1 单行限制时优先 D1 分块；加密离站备份目标由部署阶段指定，不为预期规模先加对象存储 |
@@ -122,8 +122,8 @@ CSV 降级是新增 `source=manual_fitdays_csv` 导入适配器，经过相同�
 | 数值 lexeme、MD5/UUID/fetch | 已验证，Node 22 + workerd | `research/spike-results.json` |
 | Inspector tools/list + read | 已验证，Node HTTP + Worker | `research/node-results.json`；Worker 使用回环代理内存注入合成 token |
 | OAuth 发现、S256、code replay、invalid bearer、错误 audience、降权 | 已验证，本地静态 client/合成身份 | `research/spike/check.mjs`；不是 Access/CIMD/ChatGPT 验收 |
-| 训练 record→append→amend→finalize→read/reopen | 已验证，SQLite fixture | `research/spike/core-check.py`；不是 MCP 训练生产全链 |
-| D1 raw 往返、batch 失败回滚 | 已验证，workerd 模拟 D1 | 最终 D1 训练事务及并发 CAS **未验证** |
+| 训练 record→append→amend→finalize→read/reopen | 已验证，SQLite fixture；实现后 workerd D1 全链 | `research/spike/core-check.py`；`tests/workouts.test.ts`（含 guard CAS 抢先提交、并发创建、提交后断流、状态未知） |
+| D1 raw 往返、batch 失败回滚 | 已验证，workerd 模拟 D1 | 实现后的发布原子性/fencing 见 `tests/measurements.test.ts`；**云端 D1** 事务仍未验证 |
 | G1 真实 CN | **未验证/阻断** | 用户未配置 Secrets；列表字段/数据量/join/分页/边界/token/增量/全量/账号条款 |
 | G2 生产资源与恢复 | **未验证/阻断** | 云端峰值 CPU/内存、大小、D1事务、加密备份恢复、日志泄漏扫描 |
 | G3 真实 OAuth | **未验证/阻断** | Access 本人、CIMD、精确回调、刷新降权、撤销、过期与错误 issuer、外部限流 |
@@ -137,3 +137,15 @@ OpenAI 当前入口为 Settings → Security and login → Developer mode，再�
 1/11/13：本文件 OAuth 与接入、MCP_CONTRACT；2：具体端点与 Access；3/4/5：组件、spike 和回退；6/7：上游审计与 DATA_CONTRACT；8：字段清单仅源码/合成，真实明确未验证；9/10：同步策略及 MCP 限制；12：非官方风险/CSV；14–17：MCP_CONTRACT 的幂等、状态机与单位；18：DATA_CONTRACT 的可复现统计口径。
 
 架构关键假设已由显式调用的 GPT-6 Astra `ultra` 子代理只读复核；主代理完成上游检查、spike 和文档整合。未调用 Opus 5。最高档调用不代替任何实测证据。
+
+## 实现阶段变更（2026-09-14，Opus 5）
+
+以下变更都没有改变数据语义；没有遇到“契约与真实上游行为冲突”（真实上游尚未接入）。
+
+1. **MCP 协议层不再使用 `@modelcontextprotocol/sdk` 的 Server/transport。** 证据：`wrangler deploy --dry-run` 产物中 `new Function(` 出现 1 次，来源 `node_modules/ajv/dist/compile/index.js`，由 SDK 1.30.0 `server/index.js` 静态 `import { AjvJsonSchemaValidator }` 引入（即使传入 cfworker 校验器也会打包）。这违反 IMPLEMENTATION_PLAN 阶段 0 的“无 eval/unsafe-eval 依赖”。V1 只需要无状态 JSON 响应的 `initialize/ping/tools/list/tools/call` 与通知，改为 `src/mcp.ts` 自行处理，逐项对齐 SDK 的 406/415/协议版本头 400/批量行为。结果：bundle 993 KiB → 388 KiB，`new Function`/`eval` 为 0，运行时依赖去掉 SDK 与 zod。互通证据：`research/spike/production-inspector-check.mjs` 用 wrangler 生产 bundle + workerd + 官方 MCP Inspector CLI 2.6.0（Node 22.23.2）完成 tools/list（19）、结构化输出被客户端接受、scope 拒绝、写入后读回（`research/production-inspector-results.json`）。
+2. **授权页绑定模式。** `OWNER_OIDC_SUB` 为空时，Access 登录后只向登录者显示其自己的 `sub`，不创建 consent、不签发，用于首次部署取得本人 `(issuer, sub)`。
+3. **每次同步尝试使用独立 batch_id。** cron 回收被截断的尝试时新建 batch 重试；只有仍持有 lease 的尝试能发布或写入错误状态。起因是独立审查发现同 batch_id 重排时旧尝试晚到的失败处理会把已发布批次标成失败。
+4. **首次全量冷却 10 分钟。** 没有检查点时（首批失败或 partial）incremental 请求实际执行全量，冷却按实际模式计算。
+5. **身份白名单之外的补充**：consent 页以回调 origin 为主要核对信息，客户端自报名称只作参考（CIMD 下名称可被任意填写）。
+
+独立审查：Claude 子代理（模型 Opus；GPT-5.6 Sol 所需的 codex 连接当次不可用）对提交 6840429 做只读审查，报告 2 HIGH / 4 MEDIUM / 6 LOW 与 3 处偏弱测试，全部修复并补回归测试（每条确认撤掉修复会失败）。这不是 Astra 复核，也不替代 G1–G5。

@@ -202,3 +202,39 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 `workout-flow.json`：三次已完成汇报和一条计划；逐组重量不同、有氧字段。SQLite 测试拒绝显式 planned 标记，不证明自然语言分类器或 ChatGPT 已正确辨别所有表达。
 
 真实 fixture 交付 gate：用 Secrets 请求 → 内存筛选 → 所有身份 ID 一致替换、时间一致平移、测量值按明确方法变换 → 自动秘密扫描 + 人工 review → provenance 标明真实衍生、字段保留/删改清单与捕获时间。fixture 禁真实认证/身份值；不用实际邮箱/手机号作为测试示例。未通过 gate 前不写 `real-cn*.json`。
+
+## 7. 实现细化（2026-09-14，Opus 5）
+
+契约语义未改；以下是实现中确定的具体规则，真实 CN 数据（G1）可能要求调整，调整时同步更新本节与测试。
+
+**秘密边界**（`src/sanitize.ts`，`sanitizer_version=1`）
+
+- 秘密键：标准化键名（小写、去掉非字母数字）命中 token/password/secret/cookie/authorization/openid/unionid/email/phone/mobile/apikey/signature/credential 子串，或等于 account、mac、sn、ssid、ip、birthday、photo、remark_name 等。整个字段移除，路径记入 `redacted_paths_json`；键名本身像秘密时路径写 `<redacted-key>`。
+- 可疑值：Bearer、JWT、邮箱、任何 URL、MAC；未知字段中的手机号形态（去空格/括号/连字符，允许 +86/0086/86 前缀，字符串和数字都查）。已知字段（上游类型里的 ID/时间/来源类）不做手机号形态判断，避免误删 ID。
+- 已知秘密值精确/子串匹配：登录名、密码、FitDays 等价密码摘要、登录返回的 token/refresh token，以及登录响应与同步响应 `account` 中**认证/联系方式类键**下的值（普通字段如 updated_at 不收集）。
+- 未知字段里的字符串只接受空串、数字、数字列表、日期时间形态，其他一律 `UNCLASSIFIED_STRING` 阻断整条；JSON 样字符串能解析时递归检查，不能解析但出现秘密键名时 `SECRET_IN_UNPARSEABLE_STRING` 阻断。ext_data 不能解析但不含秘密时原串保留、`parse_status=invalid`。
+- `__proto__`、`constructor` 等键按普通数据保留。
+
+**身份、时间与索引**
+
+- `profile_ref = p_` + SHA-256(“profile\\0” + suid) 前 16 位；无 suid 为 `p_unknown`。`device_ref` 同理（`d_`）。设备投影只保留型号与固件。
+- `source_record_id` = `data_id`（空、`""`、`"0"` 视为缺失）；缺失时 `sha256:` + 规范化记录哈希。`first_seen_at` 为首次暂存时间（失败批次也可能留下身份行，但没有已发布版本，查询不可见）。
+- `measured_time` 大于 1e11 视为毫秒并标 `measured_time_ms_assumed`；缺失标 `measured_time_missing`，不回退到无时区的 created_at。
+- `is_deleted` 缺失按 0（标 `is_deleted_missing`）；非 0/1/true/false 视为未识别（索引 null、默认查询排除、标 `is_deleted_unrecognized`）。
+- 索引指标：weight_kg（缺失时由 weight_g/1000 并标记）、bmi、body_fat_pct←bfr、muscle_pct←rom、skeletal_muscle_pct←rosm、body_water_pct←vwc、protein_pct←pp、subcutaneous_fat_pct←sfr、visceral_fat_index←uvi、bone_mass_kg←bm、bmr_kcal←bmr、body_age←bodyage、heart_rate_bpm←hr、smi/whr←ext_data；height 数据集 height_cm。数字字符串接受但标 `<字段>_numeric_string`。
+- 派生：`fat_mass_kg`、`fat_free_mass_kg` 只在 bfr>0 时计算；bfr=0 标 `body_fat_zero_unverified`。
+- 存储分块 256 KiB（BLOB）；输出分块 24 KiB（base64）。
+
+**同步**
+
+- 窗口 180 天、相邻窗口重叠 1 天、最新端点为当前时间 +1 天；增量从上个完整批次的检查点往前重叠 7 天。partial 批次不推进检查点。
+- 每次尝试一个 batch_id；暂存分多个 D1 batch 写入（未发布不可见），发布为单个 D1 batch（lease 守卫 + 置已发布 + last_seen + 投影 + sync_meta + 批次状态 + 释放 lease）。
+- stale：从未成功、最后成功超过 15 分钟，或最后一次尝试失败晚于最后成功。
+
+**训练**
+
+- 单位换算表：kg/公斤/千克、lb/lbs/磅；m/米、km/公里/千米、mi/英里；m/s、km/h/公里每小时、mph。`*_original` 单位不在表中时标准化值为 null 并标 `unknown_*_unit`。
+- 质量标记：`speed_distance_time_inconsistent`（偏差 >15%）、`heart_rate_out_of_range`（<25 或 >250）、`power_out_of_range`（>3000 W）、`assisted_load_semantics_unclear`。
+- 事件 `parsed_json` 保存标准化后的条目与 `checks.numbers_in_raw_text`（结构化数字是否都出现在原话中，仅审计用，不阻断）；`evidence_origin=user_report_via_model`，`parser_version=server_rules_v1`。
+- 会话时长：用户报告优先（`user_reported`）；显式 start 的会话在结束时按起止时间计算（`timestamps`）；由首条记录自动创建的会话为 `unknown`。重开后保留上次结束时写入的时长/RPE/备注，直到再次结束。
+- 训练日按条目发生时间的本地日期计；跨午夜会话会计入两天。
