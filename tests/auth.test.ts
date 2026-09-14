@@ -182,7 +182,9 @@ async function fullFlow(ip: string) {
   return { start, callbackUrl, consentPage, html, fields: consentFields(html) }
 }
 
-const ip = () => `198.51.100.${Math.floor(Math.random() * 250) + 1}`
+let ipCounter = 0
+// 每个请求方独立 IP，避免限流计数在测试之间串扰。
+const ip = () => `198.51.100.${++ipCounter}`
 
 afterEach(() => {
   mutateClaims = (c) => c
@@ -375,6 +377,46 @@ describe('Access OIDC 本人授权 + consent（合成 IdP）', () => {
       signingKey = pair.privateKey
       idTokenHeader = { alg: 'RS256', kid: 'k1' }
     }
+  })
+
+  it('未绑定 OWNER_OIDC_SUB 时只显示登录者自己的 sub，不进入 consent、不签发', async () => {
+    const address = ip()
+    const unbound = { ...authEnv, OWNER_OIDC_SUB: '' } as Env
+    const { client } = await newClient()
+    const verifier = randomToken()
+    const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(verifier))))
+    const params = new URLSearchParams({
+      client_id: client.clientId,
+      redirect_uri: 'https://client.test/callback',
+      response_type: 'code',
+      scope: 'body:read',
+      state: 's',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    })
+    const start = await call(
+      new Request(`${ORIGIN}/authorize?${params}`, { headers: { 'cf-connecting-ip': address } }),
+      unbound,
+    )
+    expect(start.status).toBe(302)
+    const cookie = start.headers.get('set-cookie')?.split(';')[0] ?? ''
+    const callbackUrl = await loginAtIdp(start.headers.get('location') ?? '')
+    const consents = async () =>
+      (
+        await env.DB.prepare("SELECT COUNT(*) AS n FROM auth_pending WHERE kind = 'consent'").first<{
+          n: number
+        }>()
+      )?.n
+    const before = await consents()
+    const res = await call(
+      new Request(callbackUrl, { headers: { cookie, 'cf-connecting-ip': address } }),
+      unbound,
+    )
+    expect(res.status).toBe(403)
+    const html = await res.text()
+    expect(html).toContain('owner-subject')
+    expect(html).not.toContain('consent_id')
+    expect(await consents()).toBe(before)
   })
 
   it('state 一次性、cookie 绑定浏览器；consent 校验 Origin/CSRF 且一次性；拒绝时回传 access_denied', async () => {

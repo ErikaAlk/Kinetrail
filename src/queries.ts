@@ -216,13 +216,16 @@ export async function toMeasurement(
     const record = parseLossless(row.raw_json) as Record<string, unknown>
     const ext = record.ext_data
     if (typeof ext === 'string') {
-      if (ext.length <= 200_000) extRaw = ext
-      else complete = false
-      if (row.ext_parse_status === 'ok') extParsed = parseLossless(ext)
+      // ext_data 原文与解析各带一份；超过内联上限时两者都不内联，从 weight.raw_json（或其 chunk_ref）读取。
+      if (byteLength(ext) <= OUTPUT_INLINE_BYTES / 2) {
+        extRaw = ext
+        if (row.ext_parse_status === 'ok') extParsed = parseLossless(ext)
+      } else complete = false
     }
   } else complete = false
 
   const relations = []
+  let relationBudget = OUTPUT_INLINE_BYTES
   for (const [dataset, column] of RELATIONS) {
     const fk = column ? (row[column] as string | null) : null
     if (!column || !fk) {
@@ -240,7 +243,15 @@ export async function toMeasurement(
       51,
     )
     if (matches.length > 50) complete = false
-    const records = matches.slice(0, 50).map(toRawRecord)
+    // 关联记录共用一个内联预算，超出部分只给 chunk_ref，避免一次体测因附属记录过多而整体超限。
+    const records = matches.slice(0, 50).map((match) => {
+      const record = toRawRecord(match)
+      if (record.complete && match.byte_length <= relationBudget) {
+        relationBudget -= match.byte_length
+        return record
+      }
+      return { ...record, raw_json: null, complete: false, chunk_ref: match.id }
+    })
     if (records.some((r) => !r.complete)) complete = false
     const status =
       matches.length === 0

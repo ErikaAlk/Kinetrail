@@ -24,6 +24,7 @@ describe('FitDays 只读适配层', () => {
       'https://online.fitdays.cn/api/sync/syncFromServer',
     ])
     expect(result.windows[0]?.text).toContain('"big":9007199254740993')
+    expect(up.redirects).toEqual(['manual', 'manual'])
     for (const secret of [
       SYNTHETIC.token,
       SYNTHETIC.refresh,

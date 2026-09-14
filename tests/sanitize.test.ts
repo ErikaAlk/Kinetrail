@@ -73,6 +73,42 @@ describe('秘密边界', () => {
     expect(blocked.blocked[0]?.code).toBe('SECRET_IN_UNPARSEABLE_STRING')
   })
 
+  it('审查回归：截断的 ext_data 里出现秘密键名时整条阻断，输出检查也能发现', () => {
+    const truncated = '{"refresh_token":"rt-other-device-9f8e7d6c5b4a","bfr":20'
+    const r = clean(JSON.stringify({ data_id: 'w', ext_data: truncated }))
+    expect(r.blocked[0]?.code).toBe('SECRET_IN_UNPARSEABLE_STRING')
+    expect(findSecretPath({ raw_json: JSON.stringify({ ext_data: truncated }) })).toBe('raw_json.ext_data')
+    expect(findSecretPath({ note: '{"bfr":20' })).toBeNull()
+  })
+
+  it('审查回归：带空格/国际前缀的手机号、数字型手机号与已知秘密值被移除；已知数字字段不误伤', () => {
+    const r = sanitizeRecord(
+      parseLossless(
+        JSON.stringify({
+          data_id: 'w',
+          a: '139 1234 5678',
+          b: '008613912345678',
+          c: 13812345678,
+          suid: 13812345678,
+          login_number: 18612345678,
+        }),
+      ),
+      'weight',
+      new Set(['18612345678']),
+    )
+    expect(r.redactedPaths.sort()).toEqual(['a', 'b', 'c', 'login_number'])
+    expect(JSON.stringify(r.value)).toContain('"suid":13812345678')
+  })
+
+  it('审查回归：__proto__ / constructor 键作为普通数据保留，不触发原型访问', () => {
+    const r = clean('{"data_id":"w","__proto__":{"x":1},"constructor":5,"ext_data":"{\\"__proto__\\":2}"}')
+    expect(r.blocked).toEqual([])
+    expect(JSON.stringify(r.value)).toBe(
+      '{"data_id":"w","__proto__":{"x":1},"constructor":5,"ext_data":"{\\"__proto__\\":2}"}',
+    )
+    expect(Object.getPrototypeOf(r.value)).toBe(Object.prototype)
+  })
+
   it('输出二次检查能发现 raw_json 字符串内的秘密键', () => {
     expect(findSecretPath({ items: [{ raw_json: '{"x":{"token":"t"}}' }] })).toBe('items[0].raw_json.x.token')
     expect(

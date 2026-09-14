@@ -3,9 +3,10 @@
 
 import { type CursorState, decodeCursor, encodeCursor, queryHash } from './cursor'
 import type { ToolContext, ToolOutcome } from './mcp'
-import { parseRange } from './queries'
-import { isSuspiciousValue } from './sanitize'
+import { PAGE_BYTE_BUDGET, parseRange } from './queries'
+import { findSecretPath } from './sanitize'
 import {
+  byteLength,
   canonicalStringify,
   DEFAULT_TIMEZONE,
   isoInZone,
@@ -172,14 +173,6 @@ function assertCompletionPlausible(rawText: string, rules: RegExp[]): void {
   }
 }
 
-function assertNoSecrets(...texts: (string | undefined)[]): void {
-  for (const text of texts) {
-    if (text !== undefined && isSuspiciousValue(text, undefined, false)) {
-      throw new KtError('SENSITIVE_PAYLOAD_BLOCKED', { category: 'workout_input' })
-    }
-  }
-}
-
 const DATA_FIELDS: (keyof SetInput)[] = [
   'load_value',
   'load_original',
@@ -199,21 +192,14 @@ function convertOriginal(
   table: Record<string, number>,
 ) {
   if (!original) return { value: null, flag: null }
-  const factor = table[original.unit.trim().toLowerCase()] ?? table[original.unit.trim()]
+  const unit = [original.unit.trim().toLowerCase(), original.unit.trim()].find((u) => Object.hasOwn(table, u))
+  const factor = unit === undefined ? undefined : table[unit]
   const numeric = typeof original.value === 'number' ? original.value : Number(original.value)
   if (factor === undefined || !Number.isFinite(numeric)) return { value: null, flag: 'unknown_original_unit' }
   return { value: numeric * factor, flag: 'converted_from_original' }
 }
 
 export function normalizeEntry(entry: EntryInput): StoredEntry {
-  assertNoSecrets(
-    entry.exercise_name_raw,
-    entry.equipment_label,
-    entry.facility,
-    entry.notes,
-    entry.exercise_id,
-    entry.equipment_ref,
-  )
   const normalized = entry.sets.map((set) => {
     if (!DATA_FIELDS.some((field) => set[field] !== undefined)) {
       throw new KtError('INVALID_INPUT', { category: 'empty_set' })
@@ -228,11 +214,6 @@ export function normalizeEntry(entry: EntryInput): StoredEntry {
       throw new KtError('INVALID_UNIT')
     }
     if (set.resistance_unit !== undefined && set.resistance === undefined) throw new KtError('INVALID_UNIT')
-    assertNoSecrets(
-      set.notes,
-      set.resistance_unit,
-      typeof set.resistance === 'string' ? set.resistance : undefined,
-    )
 
     const flags = new Set<string>()
     const pick = (
@@ -358,6 +339,9 @@ async function runWrite(
   const hash = await payloadHash(tool, args)
   const prior = await readReceipt(db, ctx.ownerId, args.idempotency_key)
   if (prior) return replay(prior, tool, hash)
+  // 与读工具输出前的检查同一规则：任何字段（原话、备注、原始单位、器械名……）带邮箱/URL/JWT 等都不入库，
+  // 否则写入成功后该历史页会永久被输出检查拦截。
+  if (findSecretPath(args)) throw new KtError('SENSITIVE_PAYLOAD_BLOCKED', { category: 'workout_input' })
 
   const nowMs = ctx.deps.now()
   const built = await plan(hash, nowMs)
@@ -500,7 +484,6 @@ export async function startWorkoutSession(args: StartArgs, ctx: ToolContext): Pr
       if (args.expected_revision !== 0) throw new KtError('INVALID_INPUT', { category: 'start_revision' })
       const tz = timezoneOf(args.timezone)
       const startedMs = instant(args.started_at, nowMs, 'started_at')
-      assertNoSecrets(args.raw_text, args.facility)
       assertCompletionPlausible(args.raw_text, [FUTURE, ADVICE, HYPOTHETICAL, NEGATION, OTHERS])
       const db = ctx.env.DB
       const sessionId = crypto.randomUUID()
@@ -577,7 +560,6 @@ export async function recordWorkoutEvent(args: RecordArgs, ctx: ToolContext): Pr
         throw new KtError('NEEDS_CLARIFICATION', { category: 'completion' })
       const tz = timezoneOf(args.timezone)
       const occurredMs = instant(args.occurred_at, nowMs, 'occurred_at')
-      assertNoSecrets(args.raw_text)
       assertCompletionPlausible(args.raw_text, [FUTURE, INTENT, ADVICE, HYPOTHETICAL, NEGATION, OTHERS])
       const stored = args.entries.map(normalizeEntry)
       const db = ctx.env.DB
@@ -776,7 +758,6 @@ export async function finalizeWorkoutSession(args: FinalizeArgs, ctx: ToolContex
       const endedMs = instant(args.ended_at, nowMs, 'ended_at')
       if (endedMs < session.started_at_ms)
         throw new KtError('INVALID_INPUT', { category: 'ended_before_start' })
-      assertNoSecrets(args.raw_text, args.notes)
       const durationSource =
         args.duration_seconds !== undefined
           ? 'user_reported'
@@ -866,7 +847,6 @@ export async function reopenWorkoutSession(args: ReopenArgs, ctx: ToolContext): 
       }
       if (session.status !== 'finalized')
         throw new KtError('INVALID_INPUT', { category: 'session_not_finalized' })
-      assertNoSecrets(args.raw_text)
       const eventId = crypto.randomUUID()
       const next = session.revision + 1
       const receipt: Receipt = {
@@ -938,7 +918,6 @@ export async function amendWorkoutEntry(args: AmendArgs, ctx: ToolContext): Prom
       if (session.revision !== args.expected_revision) {
         throw new KtError('REVISION_CONFLICT', { currentRevision: session.revision })
       }
-      assertNoSecrets(args.raw_text)
       const stored = normalizeEntry(args.replacement)
       const eventId = crypto.randomUUID()
       const next = session.revision + 1
@@ -1161,10 +1140,12 @@ export async function getWorkoutHistory(args: HistoryArgs, ctx: ToolContext): Pr
   const open = await openSessions(db, ctx.ownerId)
   const workouts = []
   let entryBudget = HISTORY_MAX_ENTRIES
+  let bytesUsed = 0
   let lastSession: SessionRow | null = null
+  const pageSessions = sessions.results.slice(0, limit)
   let more = sessions.results.length > limit
-  for (const session of sessions.results.slice(0, limit)) {
-    if (entryBudget <= 0) {
+  for (const [index, session] of pageSessions.entries()) {
+    if (entryBudget <= 0 || bytesUsed >= PAGE_BYTE_BUDGET) {
       more = true
       break
     }
@@ -1191,9 +1172,38 @@ export async function getWorkoutHistory(args: HistoryArgs, ctx: ToolContext): Pr
         (!args.equipment_ref || entry.equipment_ref === args.equipment_ref)
       )
     })
-    if ((args.exercise_id || args.equipment_ref) && matching.length === 0) continue
-    const page = matching.slice(0, entryBudget)
+    if ((args.exercise_id || args.equipment_ref) && matching.length === 0) {
+      // 被筛掉的会话也要推进游标，否则一页里全不匹配时会返回空列表且没有下一页。
+      lastSession = session
+      continue
+    }
+    // 条目数与字节双重预算：raw_text 每条都带一份，只按条数分页会让整页超过响应上限。
+    const page: EntryVersionRow[] = []
+    const items = []
+    for (const row of matching) {
+      if (page.length >= entryBudget) break
+      const item = {
+        entry_id: row.entry_id,
+        version: row.version,
+        supersedes_version: row.supersedes_version,
+        state: row.state,
+        occurred_at: row.occurred_at,
+        raw_text: row.raw_text,
+        entry: JSON.parse(row.entry_json) as StoredEntry,
+      }
+      const size = byteLength(JSON.stringify(item))
+      if (bytesUsed + size > PAGE_BYTE_BUDGET && (page.length > 0 || workouts.length > 0)) break
+      page.push(row)
+      items.push(item)
+      bytesUsed += size
+    }
+    if (page.length === 0 && matching.length > 0) {
+      // 本页预算已用完：从这个会话开始下一页。
+      more = true
+      break
+    }
     entryBudget -= page.length
+    lastSession = session
     const complete = page.length === matching.length
     const lastEntry = page.at(-1)
     const entryCursor =
@@ -1212,21 +1222,13 @@ export async function getWorkoutHistory(args: HistoryArgs, ctx: ToolContext): Pr
         session,
         session.status === 'open' && (open.length > 1 || !autoEligible(session, now)),
       ),
-      entries: page.map((row) => ({
-        entry_id: row.entry_id,
-        version: row.version,
-        supersedes_version: row.supersedes_version,
-        state: row.state,
-        occurred_at: row.occurred_at,
-        raw_text: row.raw_text,
-        entry: JSON.parse(row.entry_json) as StoredEntry,
-      })),
+      entries: items,
       entries_complete: complete,
       entry_cursor: entryCursor,
     })
-    lastSession = session
     if (!complete) {
-      more = sessions.results.length > workouts.length || more
+      // 该会话剩余条目用 entry_cursor 续读；会话列表从下一个会话继续。
+      more = more || index < pageSessions.length - 1
       break
     }
   }

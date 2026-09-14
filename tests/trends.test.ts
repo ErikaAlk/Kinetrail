@@ -97,9 +97,21 @@ describe('体测趋势口径 trend_v1（固定数字）', () => {
     )
     expect(find(weeks, 'pop_change', 'weight_kg').value).toBe(-9.5) // 71.5 - 81
     expect(find(weeks, 'pop_change_pct', 'weight_kg').value).toBeCloseTo((-9.5 / 81) * 100, 10)
+    // bfr=0（仅称重）不计入体脂率：上一周没有有效体脂数据，环比为 null
     const pct = find(weeks, 'pop_change_pct', 'body_fat_pct')
     expect(pct.value).toBeNull()
-    expect(pct.quality_flags).toContain('previous_zero')
+    expect(pct.quality_flags).toContain('previous_valid_days:0')
+    expect(find(weeks, 'period', 'body_fat_pct').value).toBe(23.75) // mean(median(25,30), 20)
+
+    const zeroPrev = computeBodyTrend(
+      [sample('2026-09-08T02:00:00Z', 0, 20), ...midnight],
+      parseRange({ start: '2026-09-14T00:00:00+08:00', end: '2026-09-21T00:00:00+08:00' }),
+      'week',
+      ['weight_kg'],
+    )
+    const zeroPct = find(zeroPrev, 'pop_change_pct', 'weight_kg')
+    expect(zeroPct.value).toBeNull()
+    expect(zeroPct.quality_flags).toContain('previous_zero')
   })
 
   it('周从周一开始；被区间截断的周期标 partial_period；月份按日历月', () => {
@@ -192,6 +204,39 @@ describe('训练趋势口径 training_v1（固定数字）', () => {
     const bench = points.filter((p) => p.metric === 'best_load_kg' && p.group_key.startsWith('series:卧推'))
     expect(bench.map((p) => p.value).sort()).toEqual([60, 62.5])
     expect(bench.every((p) => p.quality_flags.includes('equipment_unknown_not_comparable'))).toBe(true)
+  })
+})
+
+describe('审查回归：超长序列键', () => {
+  it('动作名与场馆很长时仍按器械区分序列，不因截断合并', () => {
+    const longName = '坐姿器械辅助单臂高位下拉变式'.repeat(5) // 70 字
+    const facility = '某某市某某区某某路某某号某某大厦某某层某某健身中心'.repeat(2)
+    const make = (sessionId: string, equipment: string | undefined, iso: string): TrainingEntry => ({
+      sessionId,
+      sessionOpen: false,
+      sessionFacility: facility,
+      occurredMs: Date.parse(iso),
+      entry: normalizeEntry({
+        exercise_name_raw: longName,
+        category: 'strength',
+        ...(equipment ? { equipment_label: equipment } : {}),
+        sets: [{ load_value: 40, load_unit: 'kg', reps: 10 }],
+      }),
+    })
+    const points = computeTrainingTrend(
+      [
+        make('s1', '器械X', '2026-09-14T10:00:00Z'),
+        make('s1', '器械Y', '2026-09-14T10:10:00Z'),
+        make('s2', undefined, '2026-09-15T10:00:00Z'),
+        make('s3', undefined, '2026-09-16T10:00:00Z'),
+      ],
+      parseRange({ start: '2026-09-14T00:00:00+08:00', end: '2026-09-21T00:00:00+08:00' }),
+      'week',
+      true,
+    )
+    const sets = points.filter((p) => p.metric === 'working_sets' && p.group_key.startsWith('series:'))
+    expect(sets).toHaveLength(4)
+    expect(sets.every((p) => p.value === 1 && p.group_key.length <= 128)).toBe(true)
   })
 })
 

@@ -670,6 +670,81 @@ describe('训练事实：计划/否定不入库、状态机与纠错', () => {
   })
 })
 
+describe('审查回归：训练历史分页与输入', () => {
+  it('按动作筛选时，一页里全不匹配也返回下一页游标，后续页能取到匹配的会话', async () => {
+    const { ctx } = setup()
+    const a = (await record(ctx, { occurred_at: at('09:00'), raw_text: '做完坐姿划船', entries: [row] }))
+      .data as Loose
+    await finalizeWorkoutSession(
+      {
+        idempotency_key: key(),
+        expected_revision: 1,
+        session_id: a.session_id,
+        ended_at: at('10:00'),
+        raw_text: '练完了',
+      },
+      ctx,
+    )
+    await record(ctx, { occurred_at: at('18:00'), entries: [{ ...pulldown, exercise_id: 'lat_pulldown' }] })
+    const first = await getWorkoutHistory({ ...RANGE, limit: 1, exercise_id: 'lat_pulldown' }, ctx)
+    expect(first.data).toEqual([])
+    expect(first.nextCursor).toBeTruthy()
+    const second = await getWorkoutHistory(
+      { ...RANGE, limit: 1, exercise_id: 'lat_pulldown', cursor: first.nextCursor ?? '' },
+      ctx,
+    )
+    expect((second.data as Loose[])[0].entries[0].entry.exercise_id).toBe('lat_pulldown')
+  })
+
+  it('长原话 × 多条目时按字节分页，不再整页超限，续读能取回全部条目', async () => {
+    const { ctx } = setup()
+    const longText = '完成高位下拉'.repeat(680) // ≈4080 字符，约 12 KB
+    const many = Array.from({ length: 20 }, (_, i) => ({ ...row, exercise_name_raw: `动作${i}` }))
+    const r1 = (await record(ctx, { raw_text: longText, entries: many })).data as Loose
+    await record(ctx, {
+      session_id: r1.session_id,
+      expected_revision: 1,
+      occurred_at: at('18:30'),
+      raw_text: `${longText}。`,
+      entries: many,
+    })
+    const page = await getWorkoutHistory({ ...RANGE }, ctx)
+    expect(new TextEncoder().encode(JSON.stringify(page.data)).byteLength).toBeLessThan(220 * 1024)
+    const [first] = page.data as Loose[]
+    expect(first.entries_complete).toBe(false)
+    const seen = [...first.entries]
+    let cursor = first.entry_cursor
+    while (cursor) {
+      const next = await getWorkoutHistory({ ...RANGE, session_id: r1.session_id, entry_cursor: cursor }, ctx)
+      const [w] = next.data as Loose[]
+      seen.push(...w.entries)
+      cursor = w.entry_cursor
+    }
+    expect(new Set(seen.map((e: Loose) => e.entry_id)).size).toBe(40)
+  })
+
+  it('原始单位等任意字段带邮箱/URL 时不入库（避免之后历史页被输出检查永久拦截）', async () => {
+    const { ctx, ownerId } = setup()
+    const error = await record(ctx, {
+      entries: [{ ...pulldown, sets: [{ load_original: { value: 45, unit: 'a@b.co' }, reps: 10 }] }],
+    }).catch((e) => e)
+    expect(error.code).toBe('SENSITIVE_PAYLOAD_BLOCKED')
+    expect(await count('workout_events', ownerId)).toBe(0)
+    // 原始单位是 constructor 之类的原型属性名时，按未知单位处理而不是算出 NaN
+    const odd = (
+      await record(ctx, {
+        entries: [{ ...pulldown, sets: [{ load_original: { value: 45, unit: 'constructor' }, reps: 10 }] }],
+      })
+    ).data as Loose
+    const [workout] = await history(ctx)
+    expect(workout.entries[0].entry.normalized_sets[0]).toMatchObject({
+      load_kg: null,
+      quality_flags: ['unknown_load_unit'],
+    })
+    expect(odd.revision).toBe(1)
+  })
+})
+
 describe('训练写入的鉴权边界（HTTP）', () => {
   it('只读 token 不能写；completion 非 completed 被契约拒绝；他人 token 401；错误信封含 current_revision', async () => {
     const worker = createWorker({ fetch: upstream(() => '').fetch, sleep: async () => {}, now: Date.now })

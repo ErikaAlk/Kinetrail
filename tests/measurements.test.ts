@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { hashPassword } from 'fitdays-api'
 import { describe, expect, it } from 'vitest'
 import {
   getLatestMeasurementFull,
@@ -140,6 +141,10 @@ describe('测量链：秘密边界', () => {
             // 已知字符串字段不做形态阻断，只能靠登录/账户响应收集到的秘密值精确匹配拦截
             app_ver: SYNTHETIC.token,
             device_id: SYNTHETIC.openId,
+            // 登录名、明文密码、等价密码摘要（FitDays 登录用的 MD5 形式）
+            created_at: SYNTHETIC.login,
+            source: SYNTHETIC.password,
+            adc_list: hashPassword(SYNTHETIC.password),
           }),
           weight({ data_id: 'w-note', measured_time: 1789300000, note: '今天状态不错' }),
         ],
@@ -160,7 +165,9 @@ describe('测量链：秘密边界', () => {
         ].map(async (t) => (await env.DB.prepare(`SELECT * FROM ${t}`).all()).results),
       ),
     )
-    for (const secret of Object.values(SYNTHETIC)) expect(dump).not.toContain(secret)
+    for (const secret of [...Object.values(SYNTHETIC), hashPassword(SYNTHETIC.password)]) {
+      expect(dump).not.toContain(secret)
+    }
     for (const identity of ['AA:BB:CC:DD:EE:FF', '1990-01-01', 'example.invalid/p.png', '今天状态不错']) {
       expect(dump).not.toContain(identity)
     }
@@ -453,6 +460,80 @@ describe('测量链：大记录、分页快照与发布原子性', () => {
   })
 })
 
+describe('审查回归：同步与测量输出', () => {
+  it('被 cron 接管的旧尝试晚到发布：新尝试的数据与状态不受影响，旧尝试不写错误状态', async () => {
+    const id = owner()
+    const c = clock()
+    await sync(id, baseData(), c)
+    c.advance(DAY + 3600_000)
+    const next = baseData()
+    next.weight_list = [weight({ weight_kg: 66 })]
+    const up = upstream(() => syncBody(next))
+    const cronEnv = { ...env, OWNER_ID: id } as Env
+    const job = await requestRefresh(env.DB, id, 'full', c.now())
+    await runSyncJob(env, job.job_id, deps(up.fetch, c.now), {
+      secrets: syntheticSecrets(),
+      beforePublish: async () => {
+        // 模拟 waitUntil 被截断后 lease 过期，cron 回收并以新 batch 重跑成功。
+        await env.DB.prepare('UPDATE sync_lease SET expires_at = 0 WHERE owner_id = ?').bind(id).run()
+        c.advance(1000)
+        await scheduledSync(cronEnv, deps(up.fetch, c.now), { secrets: syntheticSecrets() })
+      },
+    })
+    const batches = await env.DB.prepare(
+      'SELECT id, state FROM sync_batches WHERE owner_id = ? ORDER BY created_at',
+    )
+      .bind(id)
+      .all<Loose>()
+    expect(batches.results.find((b: Loose) => b.id === job.job_id).state).toBe('failed')
+    expect(batches.results.at(-1).state).toBe('published')
+    const ctx = ctxFor(id, c)
+    const status = data<Loose>(await getSyncStatus({}, ctx))
+    expect(status.error_code).toBeNull()
+    expect(status.state).toBe('published')
+    expect(data<Loose[]>(await getMeasurements(RANGE, ctx)).map((s) => s.metrics.weight_kg)).toContain(66)
+  })
+
+  it('没有检查点时（首批 partial）incremental 请求也受冷却约束，不会反复全量拉取', async () => {
+    const id = owner()
+    const c = clock()
+    await sync(id, { weight_list: [weight({ data_id: 'n', note: '自由文本' })] }, c)
+    expect(await rejects(requestRefresh(env.DB, id, 'incremental', c.now() + 5_000))).toBe('SYNC_IN_PROGRESS')
+    c.advance(11 * 60_000)
+    expect((await requestRefresh(env.DB, id, 'incremental', c.now())).state).toBe('queued')
+  })
+
+  it('ext_data 很大时完整体测不超限：不内联 ext 原文/解析，给出 chunk_ref', async () => {
+    const id = owner()
+    const c = clock()
+    const ext = JSON.stringify({ smi: 7, samples: Array.from({ length: 20_000 }, (_, i) => i) })
+    await sync(id, { weight_list: [weight({ ext_data: ext })] }, c)
+    const ctx = ctxFor(id, c)
+    const latest = data<Loose>(await getLatestMeasurementFull({}, ctx))
+    expect(latest.complete).toBe(false)
+    expect(latest.ext_data_raw).toBeNull()
+    expect(latest.weight.chunk_ref).toBeTruthy()
+    expect(new TextEncoder().encode(JSON.stringify(latest)).byteLength).toBeLessThan(256 * 1024)
+  })
+
+  it('account 中的普通字段（如 updated_at）不会被当作秘密误删；__proto__ 键不打断同步', async () => {
+    const id = owner()
+    const c = clock()
+    const body = JSON.parse(
+      syncBody({ weight_list: [weight({ updated_at: '2026-09-14 10:00:00', constructor: 1 })] }),
+    )
+    body.data.account.updated_at = '2026-09-14 10:00:00'
+    const text = JSON.stringify(body).replace('"constructor":1', '"constructor":1,"__proto__":{"k":2}')
+    const up = upstream(() => text)
+    const job = await requestRefresh(env.DB, id, 'full', c.now())
+    await runSyncJob(env, job.job_id, deps(up.fetch, c.now), { secrets: syntheticSecrets() })
+    const [raw] = data<Loose[]>(await getRawDataset({ dataset: 'weight', ...RANGE }, ctxFor(id, c)))
+    expect(raw.raw_json).toContain('"updated_at":"2026-09-14 10:00:00"')
+    expect(raw.raw_json).toContain('"__proto__":{"k":2}')
+    expect(raw.quality_flags).not.toContain('redacted')
+  })
+})
+
 describe('同步队列与冷却', () => {
   it('活动任务复用、增量冷却、全量冷却、cron 回收过期暂存并重跑', async () => {
     const id = owner()
@@ -479,9 +560,15 @@ describe('同步队列与冷却', () => {
       .run()
     const cronEnv = { ...env, OWNER_ID: id } as Env
     await scheduledSync(cronEnv, deps(up.fetch, c.now), { secrets: syntheticSecrets() })
-    const batch = await env.DB.prepare('SELECT state, attempts FROM sync_batches WHERE id = ?')
-      .bind(inc.job_id)
-      .first<Loose>()
-    expect(batch.state).toBe('published')
+    const batches = await env.DB.prepare(
+      'SELECT id, state, attempts FROM sync_batches WHERE owner_id = ? ORDER BY created_at, attempts',
+    )
+      .bind(id)
+      .all<Loose>()
+    // 被截断的尝试记为失败；重试是新的 batch，成功发布。
+    expect(batches.results.find((b: Loose) => b.id === inc.job_id).state).toBe('failed')
+    const retry = batches.results.find((b: Loose) => b.id !== inc.job_id && b.id !== a.job_id)
+    expect(retry.state).toBe('published')
+    expect(retry.attempts).toBe(1)
   })
 })

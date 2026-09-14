@@ -260,8 +260,8 @@ export async function prepareWindows(
       throw new KtError('INCOMPLETE_SYNC', { category: 'data_not_object' })
     }
     const body = data as Record<string, unknown>
-    // account 整体丢弃，但先把其中的认证值加入精确匹配集合。
-    collectSecretValues(body.account, knownSecrets, true)
+    // account 整体丢弃，但先把其中认证/联系方式键下的值加入精确匹配集合（不收 updated_at 之类的普通字段）。
+    collectSecretValues(body.account, knownSecrets)
 
     const manifest: Record<string, ManifestEntry> = {}
     for (const dataset of DATASETS) {
@@ -280,18 +280,19 @@ export async function prepareWindows(
         batch.partial = true
         continue
       }
-      const keys: Record<string, Set<string>> = {}
+      // Map 而不是普通对象：记录里出现 constructor / __proto__ 键时不能撞上原型属性。
+      const keys = new Map<string, Set<string>>()
       for (const item of list) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) continue
         for (const [k, v] of Object.entries(item)) {
           const name = isSuspiciousValue(k, knownSecrets) ? '<redacted-key>' : k
-          keys[name] = (keys[name] ?? new Set()).add(typeName(v))
+          keys.set(name, (keys.get(name) ?? new Set()).add(typeName(v)))
         }
       }
       manifest[dataset] = {
         presence: 'array',
         count: list.length,
-        keys: Object.fromEntries(Object.entries(keys).map(([k, v]) => [k, [...v].sort()])),
+        keys: Object.fromEntries([...keys].map(([k, v]) => [k, [...v].sort()])),
       }
       for (let index = 0; index < list.length; index++) {
         const sanitized = sanitizeRecord(list[index], dataset, knownSecrets)
@@ -355,13 +356,15 @@ function packJson(rows: unknown[]): string[] {
   let size = 2
   for (const row of rows) {
     const text = JSON.stringify(row)
-    if (current.length > 0 && size + text.length + 1 > JSON_PARAM_BUDGET) {
+    // 按 UTF-8 字节计：D1 单个参数上限 2 MB，中文 raw 每个字符占 3 字节。
+    const bytes = byteLength(text)
+    if (current.length > 0 && size + bytes + 1 > JSON_PARAM_BUDGET) {
       packs.push(`[${current.join(',')}]`)
       current = []
       size = 2
     }
     current.push(text)
-    size += text.length + 1
+    size += bytes + 1
   }
   if (current.length > 0) packs.push(`[${current.join(',')}]`)
   return packs
@@ -653,16 +656,20 @@ export async function publishBatch(db: D1Database, input: PublishInput): Promise
   await db.batch(statements)
 }
 
-/** 失败批次：标记失败、移除未发布暂存（已发布数据不受影响）、释放自己的 lease。 */
+/**
+ * 失败批次：移除该批次未发布暂存（已发布数据不受影响）、标记失败、释放自己的 lease。
+ * 每次尝试都是独立的 batch_id，所以按 batch_id 清理不会误伤新的尝试；
+ * 只有仍持有 lease 的尝试才写 sync_meta 错误状态，被接管的旧尝试不能把新结果标成失败。
+ */
 export async function failBatch(
   db: D1Database,
   ownerId: string,
   batchId: string,
-  generation: number | null,
+  generation: number,
   code: string,
   nowMs: number,
 ): Promise<void> {
-  const statements = [
+  await db.batch([
     db
       .prepare(
         'DELETE FROM raw_chunks WHERE version_id IN (SELECT id FROM raw_record_versions WHERE batch_id = ? AND published = 0)',
@@ -670,23 +677,31 @@ export async function failBatch(
       .bind(batchId),
     db.prepare('DELETE FROM raw_record_versions WHERE batch_id = ? AND published = 0').bind(batchId),
     db
-      .prepare("UPDATE sync_batches SET state = 'failed', error_code = ?, finished_at = ? WHERE id = ?")
+      .prepare(
+        `INSERT INTO sync_meta (owner_id, last_attempt_at, last_error_code)
+         SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM sync_lease WHERE owner_id = ?1 AND generation = ?4 AND holder = ?5)
+         ON CONFLICT (owner_id) DO UPDATE SET last_attempt_at = ?2, last_error_code = ?3`,
+      )
+      .bind(ownerId, nowMs, code, generation, batchId),
+    db
+      .prepare(
+        "UPDATE sync_batches SET state = 'failed', error_code = ?, finished_at = ? WHERE id = ? AND state IN ('queued', 'staging')",
+      )
       .bind(code, nowMs, batchId),
     db
       .prepare(
-        `INSERT INTO sync_meta (owner_id, last_attempt_at, last_error_code) VALUES (?1, ?2, ?3)
-         ON CONFLICT (owner_id) DO UPDATE SET last_attempt_at = ?2, last_error_code = ?3`,
+        'UPDATE sync_lease SET holder = NULL, expires_at = 0 WHERE owner_id = ? AND generation = ? AND holder = ?',
       )
-      .bind(ownerId, nowMs, code),
-  ]
-  if (generation !== null) {
-    statements.push(
-      db
-        .prepare(
-          'UPDATE sync_lease SET holder = NULL, expires_at = 0 WHERE owner_id = ? AND generation = ? AND holder = ?',
-        )
-        .bind(ownerId, generation, batchId),
-    )
-  }
-  await db.batch(statements)
+      .bind(ownerId, generation, batchId),
+  ])
+}
+
+/** 清理已失败批次残留的未发布暂存（例如被接管的旧尝试在失败标记之后才写入的行）。 */
+export async function purgeFailedStaging(db: D1Database): Promise<void> {
+  const failedUnpublished =
+    "SELECT v.id FROM raw_record_versions v JOIN sync_batches b ON b.id = v.batch_id WHERE v.published = 0 AND b.state = 'failed'"
+  await db.batch([
+    db.prepare(`DELETE FROM raw_chunks WHERE version_id IN (${failedUnpublished})`),
+    db.prepare(`DELETE FROM raw_record_versions WHERE id IN (${failedUnpublished})`),
+  ])
 }

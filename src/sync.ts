@@ -9,12 +9,21 @@ import {
   type SyncWindow,
 } from './fitdays'
 import type { Deps } from './mcp'
-import { failBatch, type PreparedBatch, prepareWindows, publishBatch, stageBatch } from './measurements'
+import {
+  failBatch,
+  type PreparedBatch,
+  prepareWindows,
+  publishBatch,
+  purgeFailedStaging,
+  stageBatch,
+} from './measurements'
 import { KtError, logEvent, parseInstant } from './util'
 
 // ponytail: 以下策略值待真实 CN 数据（G1）校准。
 export const SYNC_POLICY = {
   incrementalCooldownMs: 60_000,
+  /** 首次全量（含失败或 partial 后重试）的冷却：足够排查凭据问题，又不会反复全量拉取。 */
+  initialFullCooldownMs: 10 * 60_000,
   fullCooldownMs: 24 * 3600_000,
   leaseMs: 180_000,
   overlapSeconds: 7 * 86_400,
@@ -64,15 +73,30 @@ export async function requestRefresh(
     .first<BatchRow>()
   if (active) return viewOf(active)
 
-  const full = requested === 'full'
+  const meta = await db
+    .prepare('SELECT checkpoint_newest FROM sync_meta WHERE owner_id = ?')
+    .bind(ownerId)
+    .first<{ checkpoint_newest: number | null }>()
+  const hasCheckpoint = meta?.checkpoint_newest != null
+  // 冷却按“实际执行的模式”计算：没有检查点时 incremental 也会变成全量，不能只看 incremental 的冷却。
+  const mode: Mode = !hasCheckpoint
+    ? 'initial_full'
+    : requested === 'full'
+      ? 'reconciliation_full'
+      : 'incremental'
   const last = await db
     .prepare(
-      `SELECT created_at FROM sync_batches WHERE owner_id = ? AND ${full ? "mode != 'incremental'" : "mode = 'incremental'"}
+      `SELECT created_at FROM sync_batches WHERE owner_id = ? AND ${mode === 'incremental' ? "mode = 'incremental'" : "mode != 'incremental'"}
        ORDER BY created_at DESC LIMIT 1`,
     )
     .bind(ownerId)
     .first<{ created_at: number }>()
-  const cooldown = full ? SYNC_POLICY.fullCooldownMs : SYNC_POLICY.incrementalCooldownMs
+  const cooldown =
+    mode === 'incremental'
+      ? SYNC_POLICY.incrementalCooldownMs
+      : mode === 'initial_full'
+        ? SYNC_POLICY.initialFullCooldownMs
+        : SYNC_POLICY.fullCooldownMs
   if (last && nowMs - last.created_at < cooldown) {
     throw new KtError('SYNC_IN_PROGRESS', {
       retryable: true,
@@ -80,12 +104,6 @@ export async function requestRefresh(
       category: 'cooldown',
     })
   }
-  const meta = await db
-    .prepare('SELECT checkpoint_newest FROM sync_meta WHERE owner_id = ?')
-    .bind(ownerId)
-    .first<{ checkpoint_newest: number | null }>()
-  const hasCheckpoint = meta?.checkpoint_newest != null
-  const mode: Mode = !hasCheckpoint ? 'initial_full' : full ? 'reconciliation_full' : 'incremental'
   const id = crypto.randomUUID()
   await db
     .prepare("INSERT INTO sync_batches (id, owner_id, mode, state, created_at) VALUES (?, ?, ?, 'queued', ?)")
@@ -248,22 +266,24 @@ export async function scheduledSync(env: Env, deps: Deps, options: RunOptions = 
   const now = deps.now()
   const expired = await db
     .prepare(
-      `SELECT b.id, b.attempts, b.owner_id, b.generation FROM sync_batches b JOIN sync_lease l ON l.owner_id = b.owner_id
+      `SELECT b.id, b.mode, b.attempts, b.owner_id, b.generation FROM sync_batches b JOIN sync_lease l ON l.owner_id = b.owner_id
        WHERE b.state = 'staging' AND (l.holder IS NULL OR l.holder != b.id OR l.expires_at < ?)`,
     )
     .bind(now)
-    .all<{ id: string; attempts: number; owner_id: string; generation: number }>()
+    .all<{ id: string; mode: Mode; attempts: number; owner_id: string; generation: number }>()
   for (const row of expired.results) {
     await failBatch(db, row.owner_id, row.id, row.generation, 'INCOMPLETE_SYNC', now)
     if (row.attempts < SYNC_POLICY.maxAttempts) {
+      // 重试用新的 batch_id：被截断的旧尝试即使还在跑，也无法发布或清理新尝试的暂存。
       await db
         .prepare(
-          "UPDATE sync_batches SET state = 'queued', error_code = NULL, finished_at = NULL WHERE id = ?",
+          "INSERT INTO sync_batches (id, owner_id, mode, state, attempts, created_at) VALUES (?, ?, ?, 'queued', ?, ?)",
         )
-        .bind(row.id)
+        .bind(crypto.randomUUID(), row.owner_id, row.mode, row.attempts, now)
         .run()
     }
   }
+  await purgeFailedStaging(db)
 
   const secrets = options.secrets ?? envSecrets(env)
   if (!fitdaysConfigured(secrets)) return

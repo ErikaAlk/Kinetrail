@@ -81,11 +81,13 @@ function oidcConfig(env: Env) {
     jwks: env.ACCESS_OIDC_JWKS_URL,
     clientId: env.ACCESS_CLIENT_ID,
     clientSecret: env.ACCESS_CLIENT_SECRET,
-    ownerSub: env.OWNER_OIDC_SUB,
   }
   const urls = [config.authorization, config.token, config.jwks]
   const complete = Object.values(config).every(Boolean) && urls.every((u) => u.startsWith('https://'))
-  return complete ? (config as { [K in keyof typeof config]: string }) : null
+  // OWNER_OIDC_SUB 为空时进入“绑定模式”：只显示当前登录身份的 sub，永不签发授权。
+  return complete
+    ? { ...(config as { [K in keyof typeof config]: string }), ownerSub: env.OWNER_OIDC_SUB ?? '' }
+    : null
 }
 
 // ───────────── 一次性状态 ─────────────
@@ -364,6 +366,15 @@ async function callback(
     { issuer: config.issuer, audience: config.clientId, jwksUrl: config.jwks, nonce: pending.payload.nonce },
     deps,
   )
+  if (!config.ownerSub) {
+    // 首次部署绑定：登录者只能看到自己的 sub，用于设置 OWNER_OIDC_SUB；不创建 consent、不签发任何 token。
+    logEvent({ event: 'auth', status: 'denied', code: 'AUTH_REQUIRED', category: 'owner_not_bound' })
+    return page(
+      403,
+      'Kinetrail 尚未绑定本人身份',
+      `<p>当前登录身份的 sub：</p><p><code>${escapeHtml(claims.sub)}</code></p><p>确认这是你本人后，把它设置为 <code>OWNER_OIDC_SUB</code> 并重新部署。设置前任何客户端都无法获得授权。</p>`,
+    )
+  }
   // 本人白名单：固定 (issuer, sub)。不使用 email 或模型提供的任何身份字段。
   if (claims.iss !== config.issuer || !constantTimeEqual(claims.sub, config.ownerSub)) {
     logEvent({ event: 'auth', status: 'denied', code: 'AUTH_REQUIRED', category: 'not_owner' })
@@ -385,8 +396,10 @@ async function callback(
   const scopes = payload.scopes
     .map((s) => `<li><code>${escapeHtml(s)}</code>：${escapeHtml(SCOPE_LABELS[s] ?? s)}</li>`)
     .join('')
-  const body = `<p><strong>${escapeHtml(clientName)}</strong> 请求连接你的 Kinetrail（身迹）数据。</p>
-<p>授权后将跳转到：<code>${escapeHtml(redirect.origin)}</code></p>
+  // 客户端名称由客户端自己声明（CIMD 下任何人都能填），只作参考；真正需要核对的是回调地址。
+  const body = `<p>有客户端请求连接你的 Kinetrail（身迹）数据。</p>
+<p>授权后将跳转到：<strong><code>${escapeHtml(redirect.origin)}</code></strong>（请确认这是 ChatGPT 或你信任的地址）</p>
+<p>客户端自报名称：${escapeHtml(clientName)}</p>
 <p>将授予以下权限：</p><ul>${scopes}</ul>
 <p>Kinetrail 对 FitDays 始终只读；训练写入只影响 Kinetrail 自己的数据库。</p>
 <form method="post" action="/consent">

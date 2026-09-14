@@ -110,6 +110,7 @@ export const baseData = () => ({
 export interface MockUpstream {
   fetch: typeof fetch
   calls: string[]
+  redirects: (string | undefined)[]
 }
 
 export function upstream(
@@ -117,15 +118,17 @@ export function upstream(
   login: () => Response = () => new Response(loginBody()),
 ): MockUpstream {
   const calls: string[] = []
+  const redirects: (string | undefined)[] = []
   let syncIndex = 0
-  const fetchImpl = async (input: RequestInfo | URL) => {
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input))
     calls.push(`${url.origin}${url.pathname}`)
+    redirects.push(init?.redirect)
     if (url.pathname === '/api/users/login') return login()
     const result = await sync(syncIndex++)
     return typeof result === 'string' ? new Response(result) : result
   }
-  return { fetch: fetchImpl as typeof fetch, calls }
+  return { fetch: fetchImpl as typeof fetch, calls, redirects }
 }
 
 export function clock(start = Date.parse('2026-09-14T12:00:00Z')) {

@@ -117,12 +117,16 @@ export interface BodySample {
   bodyFatPct: number | null
 }
 
-/** 单次测量先算派生值（fat_mass = weight × bfr / 100），缺 bfr 或 bfr≤0 不算、不以 0 填补。 */
+/**
+ * 单次测量先算派生值（fat_mass = weight × bfr / 100）。缺 bfr 或 bfr≤0（仅称重、未测体脂）时，
+ * 体脂率与派生值都不参与聚合、不以 0 填补；raw 与索引仍保留原值 0。
+ */
 function sampleValue(sample: BodySample, metric: BodyMetric): number | null {
   const { weightKg: w, bodyFatPct: f } = sample
   if (metric === 'weight_kg') return w
+  if (f === null || f <= 0) return null
   if (metric === 'body_fat_pct') return f
-  if (w === null || f === null || f <= 0) return null
+  if (w === null) return null
   const fat = (w * f) / 100
   return metric === 'fat_mass_kg' ? fat : w - fat
 }
@@ -318,7 +322,31 @@ export function seriesKey(item: TrainingEntry, basis: string): { key: string; fl
   const equipment = equipmentKnown ?? `unknown_equipment@${item.sessionId}`
   const flags = equipmentKnown ? [] : ['equipment_unknown_not_comparable']
   const key = `series:${exercise}|${facility}|${equipment}|${basis}`
-  return { key: key.length <= 128 ? key : `series:${key.length}:${key.slice(0, 100)}`, flags }
+  if (key.length <= 128) return { key, flags }
+  // 超长时用完整键的 64 位哈希，绝不截断（截断会把尾部的器械/会话丢掉、把不同序列合并）；可读部分放进标记。
+  const label = (name: string, value: string) => `${name}:${value}`.slice(0, 128)
+  return {
+    key: `series:h:${fnv64(key)}`,
+    flags: [
+      ...flags,
+      label('exercise', exercise),
+      label('facility', facility),
+      label('equipment', equipment),
+      label('basis', basis),
+    ],
+  }
+}
+
+/** 64 位 FNV-1a（两个不同偏移的 32 位 FNV 拼接），只用于生成稳定分组键，不作安全用途。 */
+function fnv64(text: string): string {
+  let a = 0x811c9dc5
+  let b = 0x01000193 ^ 0x9e3779b9
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    a = Math.imul(a ^ c, 0x01000193) >>> 0
+    b = Math.imul(b ^ c, 0x01000193) >>> 0
+  }
+  return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0')
 }
 
 const epley = (kg: number, reps: number) =>

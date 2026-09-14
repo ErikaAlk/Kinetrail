@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { createWorker } from '../src/index'
 import { callTool, dispatch, issueToken, ORIGIN, rpc, testDeps } from './helpers'
@@ -44,6 +45,11 @@ describe('MCP HTTP 边界', () => {
     expect(header).toContain('error_description="Required scope is missing"')
     expect(header).toContain('workout:write')
     expect(header).toContain('body:read')
+    // 处理函数未执行：库里没有任何训练事件或会话
+    const rows = await env.DB.prepare(
+      'SELECT (SELECT COUNT(*) FROM workout_events) + (SELECT COUNT(*) FROM workout_sessions) AS n',
+    ).first<{ n: number }>()
+    expect(rows?.n).toBe(0)
   })
 
   it('GET 405、外部 Origin 403、超过 64 KiB 的请求 413', async () => {

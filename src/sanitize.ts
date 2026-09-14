@@ -88,6 +88,19 @@ const SUSPICIOUS_VALUE = [
   /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i, // MAC
 ]
 const CN_PHONE = /^(\+?86)?1[3-9]\d{9}$/
+/** 去掉空格、括号、连字符并把 00 国际前缀当作 +，再判断是否像中国大陆手机号。 */
+const phoneLike = (text: string) => CN_PHONE.test(text.replace(/[\s()-]/g, '').replace(/^00/, '+'))
+
+const KEY_IN_TEXT = /["']?([A-Za-z_][A-Za-z0-9_-]{1,63})["']?\s*[:=]/g
+/** 无法解析的 JSON 样字符串里是否出现秘密键名（如截断的 `{"refresh_token":"..."`）。 */
+export function secretKeyInText(text: string): boolean {
+  for (const match of text.matchAll(KEY_IN_TEXT)) if (isSecretKey(match[1] as string)) return true
+  return false
+}
+
+/** 以自有属性写入，避免 `__proto__` 等键被当成原型访问器（数据丢失或原型污染）。 */
+const setOwn = (target: Record<string, unknown>, key: string, value: unknown) =>
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true })
 
 export function isSuspiciousValue(
   value: string,
@@ -95,7 +108,7 @@ export function isSuspiciousValue(
   checkPhone = true,
 ): boolean {
   if (SUSPICIOUS_VALUE.some((re) => re.test(value))) return true
-  if (checkPhone && CN_PHONE.test(value.trim())) return true
+  if (checkPhone && phoneLike(value.trim())) return true
   for (const secret of knownSecrets) {
     if (secret.length >= 6 && value.includes(secret)) return true
     if (value === secret) return true
@@ -175,8 +188,12 @@ export const redactedPath = (base: string, key: string, secrets: ReadonlySet<str
   joinPath(base, isSuspiciousValue(key, secrets) ? '<redacted-key>' : key)
 
 function walk(value: unknown, path: string, allowed: boolean, ctx: Walk): unknown {
-  if (value === null || typeof value === 'boolean' || isRawNumber(value) || typeof value === 'number')
-    return value
+  if (value === null || typeof value === 'boolean') return value
+  if (isRawNumber(value) || typeof value === 'number') {
+    // 数字形式的秘密（登录手机号、数字 openid）同样拦截；已知数字字段不做手机号形态判断。
+    const lexeme = isRawNumber(value) ? value.rawJSON : String(value)
+    return ctx.secrets.has(lexeme) || (!allowed && phoneLike(lexeme)) ? REMOVE : value
+  }
   if (typeof value === 'string') return walkString(value, path, allowed, ctx)
   if (Array.isArray(value)) {
     const out: unknown[] = []
@@ -197,7 +214,7 @@ function walk(value: unknown, path: string, allowed: boolean, ctx: Walk): unknow
       }
       const next = walk(item, childPath, false, ctx)
       if (next === REMOVE) ctx.redacted.push(childPath)
-      else out[key] = next
+      else setOwn(out, key, next)
     }
     return out
   }
@@ -218,6 +235,10 @@ function walkString(value: string, path: string, allowed: boolean, ctx: Walk): u
       const before = ctx.redacted.length
       const inner = walk(parsed, path, false, ctx)
       return ctx.redacted.length === before ? value : JSON.stringify(inner)
+    }
+    if (secretKeyInText(value)) {
+      ctx.blocked.push({ path, valueType: 'string', code: 'SECRET_IN_UNPARSEABLE_STRING' })
+      return value
     }
   }
   // 已知字符串字段不做手机号形态判断，避免把 ID 误删；精确秘密值与 URL/邮箱等仍然拦截。
@@ -259,13 +280,14 @@ export function sanitizeRecord(
       const ext = sanitizeExt(item, ctx)
       extStatus = ext.status
       extParsed = ext.parsed
-      if (ext.value !== REMOVE) out[key] = ext.value
+      if (ext.value !== REMOVE) setOwn(out, key, ext.value)
       continue
     }
-    const allowed = allowedKeys.has(key) && typeof item === 'string'
-    const next = typeof item === 'string' ? walkString(item, key, allowed, ctx) : walk(item, key, false, ctx)
+    const allowed = allowedKeys.has(key)
+    const scalar = item === null || typeof item !== 'object' || isRawNumber(item)
+    const next = walk(item, key, allowed && scalar, ctx)
     if (next === REMOVE) ctx.redacted.push(key)
-    else out[key] = next
+    else setOwn(out, key, next)
   }
   return { value: out, redactedPaths: ctx.redacted, blocked: ctx.blocked, extStatus, extParsed }
 }
@@ -281,8 +303,8 @@ function sanitizeExt(item: unknown, ctx: Walk): { value: unknown; status: ExtPar
   try {
     parsed = parseLossless(item)
   } catch {
-    // 无法解析：原串保留（解析失败不丢 raw），但含秘密时无法重建，只能整条阻断。
-    if (isSuspiciousValue(item, ctx.secrets)) {
+    // 无法解析：原串保留（解析失败不丢 raw），但含秘密值或秘密键名时无法重建，只能整条阻断。
+    if (isSuspiciousValue(item, ctx.secrets) || secretKeyInText(item)) {
       ctx.blocked.push({ path: 'ext_data', valueType: 'string', code: 'SECRET_IN_UNPARSEABLE_STRING' })
       return { value: REMOVE, status: 'blocked', parsed: null }
     }
@@ -307,10 +329,9 @@ function walkExt(parsed: unknown, path: string, ctx: Walk): unknown {
       continue
     }
     const allowed = EXT_STRING_KEYS.has(key) && typeof item === 'string'
-    const next =
-      typeof item === 'string' ? walkString(item, childPath, allowed, ctx) : walk(item, childPath, false, ctx)
+    const next = walk(item, childPath, allowed, ctx)
     if (next === REMOVE) ctx.redacted.push(childPath)
-    else out[key] = next
+    else setOwn(out, key, next)
   }
   return out
 }
@@ -323,7 +344,7 @@ export function findSecretPath(value: unknown, path = ''): string | null {
       try {
         return findSecretPath(JSON.parse(value), path)
       } catch {
-        return null
+        return secretKeyInText(value) ? path || '$' : null
       }
     }
     return null
