@@ -102,7 +102,7 @@ CREATE INDEX rrv_batch ON raw_record_versions (batch_id);
 CREATE TABLE raw_chunks (
   version_id TEXT NOT NULL REFERENCES raw_record_versions (id),
   chunk_index INTEGER NOT NULL,
-  data TEXT NOT NULL,
+  data BLOB NOT NULL,
   chunk_hash TEXT NOT NULL,
   PRIMARY KEY (version_id, chunk_index)
 );

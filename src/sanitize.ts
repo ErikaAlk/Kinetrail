@@ -67,9 +67,17 @@ const SECRET_KEY_PARTS = [
   'credential',
 ]
 
+const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, '')
+
 export function isSecretKey(key: string): boolean {
-  const k = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const k = normalizeKey(key)
   return SECRET_KEYS.has(k) || SECRET_KEY_PARTS.some((part) => k.includes(part))
+}
+
+/** 认证/联系方式类键（不含 account 容器、日期等身份上下文），其值可作为精确匹配的已知秘密。 */
+export const isCredentialKey = (key: string): boolean => {
+  const k = normalizeKey(key)
+  return SECRET_KEY_PARTS.some((part) => k.includes(part))
 }
 
 const SUSPICIOUS_VALUE = [
@@ -162,6 +170,10 @@ interface Walk {
 const joinPath = (base: string, key: string | number) =>
   typeof key === 'number' ? `${base}[${key}]` : base ? `${base}.${key}` : key
 
+/** 键名本身像秘密（如邮箱作键）时，路径里也不能出现原键名。 */
+export const redactedPath = (base: string, key: string, secrets: ReadonlySet<string>) =>
+  joinPath(base, isSuspiciousValue(key, secrets) ? '<redacted-key>' : key)
+
 function walk(value: unknown, path: string, allowed: boolean, ctx: Walk): unknown {
   if (value === null || typeof value === 'boolean' || isRawNumber(value) || typeof value === 'number')
     return value
@@ -180,7 +192,7 @@ function walk(value: unknown, path: string, allowed: boolean, ctx: Walk): unknow
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
       const childPath = joinPath(path, key)
       if (isSecretKey(key) || isSuspiciousValue(key, ctx.secrets)) {
-        ctx.redacted.push(childPath)
+        ctx.redacted.push(redactedPath(path, key, ctx.secrets))
         continue
       }
       const next = walk(item, childPath, false, ctx)
@@ -240,7 +252,7 @@ export function sanitizeRecord(
 
   for (const [key, item] of Object.entries(record as Record<string, unknown>)) {
     if (isSecretKey(key) || isSuspiciousValue(key, secrets)) {
-      ctx.redacted.push(key)
+      ctx.redacted.push(redactedPath('', key, secrets))
       continue
     }
     if (key === 'ext_data') {
@@ -291,7 +303,7 @@ function walkExt(parsed: unknown, path: string, ctx: Walk): unknown {
   for (const [key, item] of Object.entries(parsed as Record<string, unknown>)) {
     const childPath = joinPath(path, key)
     if (isSecretKey(key) || isSuspiciousValue(key, ctx.secrets)) {
-      ctx.redacted.push(childPath)
+      ctx.redacted.push(redactedPath(path, key, ctx.secrets))
       continue
     }
     const allowed = EXT_STRING_KEYS.has(key) && typeof item === 'string'

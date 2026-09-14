@@ -2,7 +2,8 @@
 
 import { OAuthProvider, type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider'
 import { buildRegistry, type Deps, handleMcpRequest, resourceMetadataUrl, resourceUrl } from './mcp'
-import { consumeRateLimit } from './ratelimit'
+import { consumeRateLimit, purgeRateLimits } from './ratelimit'
+import { scheduledSync } from './sync'
 import { TOOLS } from './tools'
 import { KtError } from './util'
 
@@ -100,6 +101,15 @@ export function createWorker(deps: Deps) {
         throw error
       }
       return provider(env).fetch(request, env, ctx)
+    },
+
+    async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+      ctx.waitUntil(
+        (async () => {
+          await purgeRateLimits(env.DB, deps.now())
+          await scheduledSync(env, deps)
+        })(),
+      )
     },
   }
 }

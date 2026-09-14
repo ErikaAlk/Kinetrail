@@ -1,6 +1,16 @@
 // 19 个工具的中文标题、描述与处理函数。schema/annotations/scope 来自 schemas.ts（契约）。
 
 import type { ToolDefinition } from './mcp'
+import {
+  getLatestMeasurementFull,
+  getMeasurements,
+  getRawDataset,
+  getRawRecordChunk,
+  getSyncStatus,
+  listDevices,
+  listProfiles,
+  refreshData,
+} from './queries'
 import { KtError } from './util'
 
 const BIA_NOTE = '体脂秤 BIA 数值适合看趋势，不是医疗诊断。'
@@ -15,43 +25,43 @@ export const TOOLS: ToolDefinition[] = [
     name: 'get_latest_measurement_full',
     title: '最新完整体测',
     description: `读取本地镜像中最新一次有效体测的完整原始记录，含 ext_data 原文与解析结果、阻抗/心率/平衡/重心的候选关联记录。只读，不访问 FitDays；需要新数据时先调用 refresh_data。${BIA_NOTE}`,
-    handler: pending,
+    handler: getLatestMeasurementFull,
   },
   {
     name: 'get_measurements',
     title: '体测记录',
     description: `按时间范围分页读取体测。默认 summary；full 每页最多 25 条。默认排除 FitDays 标记删除的记录，include_deleted=true 可查看 tombstone。${RANGE_NOTE}${BIA_NOTE}`,
-    handler: pending,
+    handler: getMeasurements,
   },
   {
     name: 'get_raw_dataset',
     title: '原始数据集',
     description: `专家模式：分页读取脱敏后的原始测量记录（weight/impedance/hr/balance/gravity/height/rulers/skip），保留未知字段；不含账户认证字段。measurement_ref 可取某次称重的关联记录。${RANGE_NOTE}`,
-    handler: pending,
+    handler: getRawDataset,
   },
   {
     name: 'get_raw_record_chunk',
     title: '原始记录分块',
     description: '按固定版本分块读取超过响应上限的原始记录，每块附整条与分块 SHA-256，拼接后应校验整条哈希。',
-    handler: pending,
+    handler: getRawRecordChunk,
   },
   {
     name: 'get_sync_status',
     title: '同步状态',
     description: '返回最后成功同步时间、最近尝试、覆盖范围、各数据集计数与脱敏错误码。',
-    handler: pending,
+    handler: getSyncStatus,
   },
   {
     name: 'list_profiles',
     title: '测量成员',
     description: '列出 FitDays 账户下的测量成员 profile_ref 与名称，用于其他体测工具的 profile_ref 参数。',
-    handler: pending,
+    handler: listProfiles,
   },
   {
     name: 'list_devices',
     title: '测量设备',
     description: '列出设备型号与固件版本，不含 MAC、序列号等标识。',
-    handler: pending,
+    handler: listDevices,
   },
   {
     name: 'get_trend',
@@ -64,7 +74,7 @@ export const TOOLS: ToolDefinition[] = [
     title: '刷新 FitDays 数据',
     description:
       '从 FitDays 只读拉取数据并更新 Kinetrail 本地镜像，不会写入或删除 FitDays 数据。返回同步任务状态：queued 只表示已接受，不代表数据已更新，结果用 get_sync_status 查询。incremental 冷却 60 秒，full 冷却 24 小时。',
-    handler: pending,
+    handler: refreshData,
   },
   {
     name: 'get_open_workout_sessions',
