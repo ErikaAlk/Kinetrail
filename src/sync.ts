@@ -308,6 +308,8 @@ export async function scheduledSync(env: Env, deps: Deps, options: RunOptions = 
     .bind(env.OWNER_ID)
     .first<{ id: string }>()
   if (queued) return runSyncJob(env, queued.id, deps, options)
+  // 上游同一账号只保留最后一次登录的 token：关闭周期同步后只在用户明确 refresh_data 时登录。
+  if (env.PERIODIC_SYNC === 'off') return
 
   const meta = await db
     .prepare('SELECT last_attempt_at, last_full_at FROM sync_meta WHERE owner_id = ?')

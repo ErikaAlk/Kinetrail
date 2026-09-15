@@ -578,6 +578,26 @@ describe('审查回归：同步与测量输出', () => {
     expect(data<Loose[]>(await getMeasurements(RANGE, ctx)).map((s) => s.metrics.weight_kg)).toContain(66)
   })
 
+  it('PERIODIC_SYNC=off：定时调度不主动发起同步（每次登录都会顶掉手机），但仍执行已排队的刷新', async () => {
+    const id = owner()
+    const c = clock()
+    const up = upstream(() => syncBody(baseData()))
+    const manualEnv = { ...env, OWNER_ID: id, PERIODIC_SYNC: 'off' } as Env
+    await scheduledSync(manualEnv, deps(up.fetch, c.now), { secrets: syntheticSecrets() })
+    const none = await env.DB.prepare('SELECT COUNT(*) AS n FROM sync_batches WHERE owner_id = ?')
+      .bind(id)
+      .first<Loose>()
+    expect(none.n).toBe(0)
+    expect(up.calls).toHaveLength(0)
+
+    const job = await requestRefresh(env.DB, id, 'full', c.now())
+    await scheduledSync(manualEnv, deps(up.fetch, c.now), { secrets: syntheticSecrets() })
+    const done = await env.DB.prepare('SELECT state FROM sync_batches WHERE id = ?')
+      .bind(job.job_id)
+      .first<Loose>()
+    expect(done.state).toBe('published')
+  })
+
   it('没有检查点时（首批 partial）incremental 请求也受冷却约束，不会反复全量拉取', async () => {
     const id = owner()
     const c = clock()
