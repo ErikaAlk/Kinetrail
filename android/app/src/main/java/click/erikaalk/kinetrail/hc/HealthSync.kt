@@ -74,8 +74,16 @@ class HealthSync(
         val rejected = if (rejectCodes.isEmpty()) "" else "（${rejectCodes.joinToString("、")}）"
         // token 过期后只能重读现存记录，拿不到过期期间在 Health Connect 里做的删除。
         val expired = if (saved != null && fromChanges == null) "。同步基线已过期，期间在 Health Connect 删除的记录没有同步，请在 Kinetrail 里核对" else ""
-        return "推送 ${groups.size} 次测量、${deletions.size} 条删除：新增或更新 ${totals["accepted"]}，" +
-            "未变 ${totals["unchanged"]}，拒绝 ${totals["rejected"]}$rejected，删除命中 ${totals["deletions_matched"]}$expired"
+        if (groups.isEmpty() && deletions.isEmpty()) return "没有新的称重$expired"
+        // 首页行内显示，只列非零的数
+        val parts = listOfNotNull(
+            "新增或更新 ${totals["accepted"]}".takeIf { totals.getValue("accepted") > 0 },
+            "未变 ${totals["unchanged"]}".takeIf { totals.getValue("unchanged") > 0 },
+            "拒绝 ${totals["rejected"]}$rejected".takeIf { totals.getValue("rejected") > 0 },
+            "删除命中 ${totals["deletions_matched"]}".takeIf { totals.getValue("deletions_matched") > 0 },
+        )
+        val counts = if (parts.isEmpty()) "" else "：" + parts.joinToString("，")
+        return "推送 ${groups.size} 次测量" + (if (deletions.isEmpty()) "" else "、${deletions.size} 条删除") + counts + expired
     }
 
     private data class Batch(val groups: List<JSONObject>, val deletions: List<String>, val token: String)
