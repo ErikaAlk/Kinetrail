@@ -149,3 +149,8 @@ OpenAI 当前入口为 Settings → Security and login → Developer mode，再�
 5. **身份白名单之外的补充**：consent 页以回调 origin 为主要核对信息，客户端自报名称只作参考（CIMD 下名称可被任意填写）。
 
 独立审查：Claude 子代理（模型 Opus；GPT-5.6 Sol 所需的 codex 连接当次不可用）对提交 6840429 做只读审查，报告 2 HIGH / 4 MEDIUM / 6 LOW 与 3 处偏弱测试，全部修复并补回归测试（每条确认撤掉修复会失败）。第二轮对 50a2dd9 复核：确认前轮修复有效，另报无法解析字符串中的不透明值未 fail-closed、JSON-RPC 批量放大、历史页未计会话对象字节、备份未签名、中断后明文残留，均已修复（批量限 4 条且合计响应受限、HTTP 层限流、备份 Ed25519 签名、启动清扫临时目录）。第三、四轮只复核前一轮修复：把“无法解析的 JSON 样字符串”判断改为线性、容忍截断、区分对象/数组并解码转义的词法分析；批量里禁止写工具、超限结果逐项替换；备份清扫不跟随符号链接、只处理本用户的陈旧目录。第四轮的问题修复后未再送审，该词法判断仍是兜底规则而不是通用秘密识别器，真实 CN 字段目录（G1）核实后应收紧已知字段表。剩余推测项：被接管的旧尝试若先插入同一条新 raw_records 身份行，重试会因唯一约束失败并在下一次 cron 重排，只造成延迟。这不是 Astra 复核，也不替代 G1–G5。
+
+## 部署阶段变更（2026-09-14 至 15，Opus 5）
+
+1. **定时调度改由 Durable Object alarm 驱动。** 证据：cron `*/10` 经 `/schedules` 与控制台确认已注册、`handlers` 含 `scheduled`，但 14:50–15:20 各窗口都没有投递（D1 中已过期的 `auth_pending` 始终未被清理、无 `scheduled` 调用），清空后重注册仍无效；Cloudflare 社区有同类未解决报告。新增 `SyncScheduler`（SQLite 存储、单实例），alarm 每 10 分钟调用与 cron 相同的 `runScheduledTasks`，执行失败也续约。首个 alarm 由 fetch 按 isolate 补挂、10 分钟后才执行，请求本身不触发同步。cron 保留；两条路径都经过同一个 D1 lease，恢复后同时运行不会重复发布。上线后 alarm 连续 55 次按时执行。这是调度方式的变化，同步语义、lease/fencing 与补偿逻辑未变；文首“不引入 Durable Object 仅为协议包装”仍成立。
+2. **未知上游数据集在 manifest 中记录结构。** 首次真实全量因每个窗口都有未登记的 `report_list` 而 partial，但原实现只记名字，无法按 DATA_CONTRACT 第 3 条分类。现记录形态、条数、键名和类型（可疑键名脱敏，不记值）。

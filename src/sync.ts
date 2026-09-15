@@ -1,5 +1,5 @@
 // 同步任务：持久化 job（sync_batches）+ D1 lease/fencing。refresh_data 只排队并尽力立即执行，
-// cron 负责补偿未完成任务与定期刷新；不依赖孤立的 waitUntil 保证完成。
+// 定时调度（SyncScheduler alarm / cron）负责补偿未完成任务与定期刷新；不依赖孤立的 waitUntil 保证完成。
 
 import {
   envSecrets,
@@ -156,7 +156,7 @@ export interface RunOptions {
   beforePublish?: (prepared: PreparedBatch) => Promise<void>
 }
 
-/** 执行一个排队的同步任务。拿不到 lease 时直接返回，任务留在队列由 cron 补偿。 */
+/** 执行一个排队的同步任务。拿不到 lease 时直接返回，任务留在队列由定时调度补偿。 */
 export async function runSyncJob(
   env: Env,
   batchId: string,
@@ -260,7 +260,7 @@ export async function runSyncJob(
   }
 }
 
-/** cron：回收过期暂存、执行排队任务、按周期发起刷新。 */
+/** 定时调度入口：回收过期暂存、执行排队任务、按周期发起刷新。 */
 export async function scheduledSync(env: Env, deps: Deps, options: RunOptions = {}): Promise<void> {
   const db = env.DB
   const now = deps.now()
