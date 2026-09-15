@@ -419,23 +419,6 @@ tool(
   ['start', 'end'],
   ref('Trend'),
 )
-tool(
-  'refresh_data',
-  ['body:sync'],
-  { mode: enumOf('incremental', 'full') },
-  [],
-  obj(
-    {
-      job_id: ID,
-      state: enumOf('queued', 'running', 'completed'),
-      coverage: enumOf('unknown', 'partial', 'verified_window'),
-    },
-    ['job_id', 'state', 'coverage'],
-  ),
-  true,
-  true,
-  false,
-)
 tool('get_open_workout_sessions', ['workout:read'], pageProps, [], arr(ref('Session')))
 tool(
   'get_workout_history',

@@ -241,3 +241,21 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 - 事件 `parsed_json` 保存标准化后的条目与 `checks.numbers_in_raw_text`（结构化数字是否都出现在原话中，仅审计用，不阻断）；`evidence_origin=user_report_via_model`，`parser_version=server_rules_v1`。
 - 会话时长：用户报告优先（`user_reported`）；显式 start 的会话在结束时按起止时间计算（`timestamps`）；由首条记录自动创建的会话为 `unknown`。重开后保留上次结束时写入的时长/RPE/备注，直到再次结束。
 - 训练日按条目发生时间的本地日期计；跨午夜会话会计入两天。
+
+## 8. Health Connect 来源（2026-09-15，Opus 5）
+
+来源 `health_connect`：手机上的 FitDays+（`cn.icomon.fitdayspro`，Google 渠道包）在每次保存主用户称重时写入 HC，手机端 App 读取后推送。静态分析、实测与完整规则见 `research/HEALTHCONNECT.md` 第 1、3、5 节；本节是规范摘要，实现为 `src/ingest.ts`。
+
+**范围**：只接收 7 个类型（体重 kg、体脂 %、水分质量 kg、骨量 kg、BMR kcal/day、去脂体重 kg、心率 bpm），来源固定为 FitDays+。FitDays+ 只写主用户，不回填历史，不把 App 内的修改或删除同步到 HC；HC 记录没有设备信息和 clientRecordId。
+
+**身份**：同一来源、同一时刻（`time_ms`，秒级）的记录为一次测量，存为 `dataset=weight`、`source_record_id=hc:cn.icomon.fitdayspro:<time_ms>`、`profile_ref=HC_PROFILE_REF`（本人现有 profile）。按时刻精确分组有静态分析（一次 `insertRecords`、同一 `Instant`）与实测依据，不属于“凭时间相近合并”。
+
+**范围**：体重不在 (2, 400] kg 整组拒绝；其他类型越界时 raw 照存、该指标索引为 null 并标 `<type>_out_of_range`。
+
+**raw 与索引**：raw 为规范化整组（记录按类型、hc_id 码点排序，保留 HC 返回的 double 原值与 `last_modified_ms`、已删 id 列表）。索引 `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制；`body_water_pct` 由水分质量 ÷ 体重派生、保留 2 位小数并标 `body_water_pct_derived_from_mass`；`bmi` = 体重 ÷ (`HC_HEIGHT_CM` / 100)² 保留 1 位小数，标 `bmi_derived_from_height`（FitDays+ 不写 BMI；身高缺失或不在 (50, 250] 时不算；改身高只影响之后新产生的版本）；恒标 `source_health_connect`。与旧 FitDays 记录相比没有肌肉率、骨骼肌率、蛋白质、皮下脂肪、内脏脂肪、身体年龄，缺失指标不以 0 填补。
+
+**版本与删除**：已存 `hc_id` 的类型、值、修改时间与组的时区偏移不可变，冲突整组拒绝；只能补齐组内从未出现过的类型。HC 删除（`deleted_hc_ids`）把整条记录移入组的 `deleted_records` 并写新版本，删体重即 `is_deleted=1`；已删 id 与已删类型都不再接收；不物理删除。这是“来源明确 tombstone 才产生删除版本”（第 3 节）在 HC 来源上的实现。
+
+**截断与去重**：`HC_ACCEPT_AFTER`（线上为 2026-09-15T09:17:00+08:00，旧 FitDays 最后一条测量）之前的 HC 组不入库；两个来源不做跨来源匹配，也不同时导入同一时段。
+
+**批次**：每次推送一个 `sync_batches`（`source_region='health_connect'`、`mode='incremental'`、`coverage='unknown'`），在 `sync_lease` 内读取已存组、合并、暂存、原子发布；中断批次由调度标失败但不重排。

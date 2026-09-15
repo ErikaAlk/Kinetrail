@@ -17,18 +17,18 @@
 | 本人绑定 | `OWNER_OIDC_SUB` 已写入 vars（邮箱验证码登录得到的 sub；换登录邮箱会得到不同 sub，需重新绑定） |
 | 成员范围 | `PROFILE_ALLOWLIST` = `p_914ea14c79915f2f`（FitDays 成员 Erika）；同一账户下其他 5 个成员与无 suid 的记录不落库，历史数据已于 2026-09-15 物理删除 |
 | 定时调度 | Durable Object `SyncScheduler`（SQLite 存储，实例名 `scheduler`）的 alarm 每 10 分钟执行一次；本账户 cron 触发器注册成功但从不投递，`*/10` 仍保留 |
-| 同步方式 | `PERIODIC_SYNC=off`：只在 `refresh_data` 排队后由调度执行，不再每 6 小时自动登录。FitDays/FitDays+ 同一账号只保留最后一次登录，每次同步都会把手机 App 顶下线（`research/FITDAYSPLUS.md`） |
+| 同步方式 | `PERIODIC_SYNC=off`：只在 `refresh_data` 排队后由调度执行，不再每 6 小时自动登录。FitDays/FitDays+ 同一账号只保留最后一次登录，每次同步都会把手机 App 顶下线（`research/FITDAYSPLUS.md`）。**分支 `feat/hc-reader` 部署后改为手机经 Health Connect 推送、`refresh_data` 下线，见第 9 节** |
 | 迁移前书签 | D1 Time Travel `00000070-00000000-000050e7-47b4260ff4c6485eb503dca7bbd6e030`（2026-09-15T04:09Z，FitDays→FitDays+ 迁移前） |
 
 ## 1. 组成与数据边界
 
 | 组件 | 内容 | 注意 |
 | --- | --- | --- |
-| Worker `kinetrail` | `/mcp`、OAuth 端点、`/authorize` `/callback` `/consent`、`/healthz`、定时调度（DO alarm，cron 备用） | `observability.logs.invocation_logs=false`，不记录请求 URL |
+| Worker `kinetrail` | `/mcp`、OAuth 端点、`/authorize` `/callback` `/consent`、`/healthz`、`/ingest/health-connect`（设备令牌，见第 9 节）、定时调度（DO alarm，cron 备用） | `observability.logs.invocation_logs=false`，不记录请求 URL |
 | D1 `kinetrail` | 测量 raw 版本与索引、同步批次、训练事件/版本/收据、一次性授权状态、限流计数 | 事实表有禁止删除/改写触发器 |
 | KV `OAUTH_KV` | 仅 OAuth Provider 的 client/grant/token | 不存 FitDays 凭据、不存训练事实 |
-| Secrets | `FITDAYS_LOGIN` `FITDAYS_PASSWORD` `FITDAYS_REGION` `ACCESS_CLIENT_SECRET` `CURSOR_SIGNING_KEY` | 只用 `wrangler secret put`，不写 `.env`/`.dev.vars`、不放命令参数 |
-| Vars（wrangler.jsonc） | `PUBLIC_ORIGIN` `OWNER_ID` `FITDAYS_HISTORY_START` `ACCESS_OIDC_*` `ACCESS_CLIENT_ID` `OWNER_OIDC_SUB` | 非秘密，但 `OWNER_OIDC_SUB` 是身份标识，仓库若公开请改用 secret |
+| Secrets | `FITDAYS_LOGIN` `FITDAYS_PASSWORD` `FITDAYS_REGION` `ACCESS_CLIENT_SECRET` `CURSOR_SIGNING_KEY` `HC_INGEST_TOKEN_SHA256` | 只用 `wrangler secret put`，不写 `.env`/`.dev.vars`、不放命令参数 |
+| Vars（wrangler.jsonc） | `PUBLIC_ORIGIN` `OWNER_ID` `FITDAYS_HISTORY_START` `ACCESS_OIDC_*` `ACCESS_CLIENT_ID` `OWNER_OIDC_SUB` `PROFILE_ALLOWLIST` `PERIODIC_SYNC` `HC_ACCEPT_AFTER` `HC_PROFILE_REF` | 非秘密，但 `OWNER_OIDC_SUB` 是身份标识，仓库若公开请改用 secret |
 
 对 FitDays 只调用 `/api/users/login` 与 `/api/sync/syncFromServer`，没有任何写入或删除路径。
 
@@ -155,6 +155,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | `CURSOR_SIGNING_KEY` | `wrangler secret put CURSOR_SIGNING_KEY` | 已发出的分页游标全部变为 `CURSOR_INVALID`，从第一页重查即可 |
 | MCP OAuth token | 需要全部失效时，撤销该用户的 grant（Provider helper `revokeGrant`），或清空 `OAUTH_KV` 中 `grant:`/`token:` 前缀 | ChatGPT 需要重新连接 |
 | 备份密钥 | 生成新密钥对，之后的备份用新公钥；旧私钥保留到最后一份旧备份过期 | 旧备份只能用旧私钥解密 |
+| Health Connect 推送令牌 | 按第 9 节重新生成：写入新哈希 → 手机上保存新令牌 | 旧令牌立即失效；手机保存新令牌前的同步返回 401，token 不前进，不丢数据 |
 
 ## 7. 故障排查
 
@@ -165,7 +166,10 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | `UPSTREAM_TIMEOUT` | 单请求 15 秒 / 整个任务 120 秒超时，已有限重试 | 稍后重试；持续出现时查看是否需要缩小 `SYNC_POLICY.windowSeconds` |
 | `INCOMPLETE_SYNC` | 响应非 JSON、超过 32 MiB、业务码非 0、任务被截断 | `wrangler tail` 查看 `event:"sync"` 的 `category`（只含非敏感类别，如 `upstream_code_500`） |
 | 批次 `partial` | 有记录被阻断或出现未知数据集 | 按第 3 节查询 `blocked_items`；partial 不推进增量检查点 |
-| 读工具 `stale:true` | 15 分钟未成功同步或最近一次同步失败 | 周期同步已关闭，stale 是常态；用户确认要刷新时才调 `refresh_data`（会顶掉手机 App 的登录）。`PERIODIC_SYNC` 改为非 `off` 时恢复每 6 小时增量、每 7 天全量 |
+| 读工具 `stale:true` | 36 小时没有成功发布，或最近一次尝试失败 | 在手机上打开“身迹同步”推送；查 Observability 的 `event:"ingest"`。`refresh_data` 已下线，不要为此恢复 FitDays 拉取（会顶掉手机 App 的登录） |
+| 推送 HTTP 401 | 手机上的令牌与 `HC_INGEST_TOKEN_SHA256` 不符 | 按第 9 节重新生成并保存令牌 |
+| 推送 HTTP 503 `not_configured` / `busy` | 缺 `HC_ACCEPT_AFTER`/`HC_PROFILE_REF` 变量，或 `HC_PROFILE_REF` 不在库里已有成员中（日志 `status:"profile_mismatch"`）；`busy` 为 lease 被占用 | 核对变量后部署；`busy` 稍后再同步即可 |
+| 推送 200 但 `rejected` 非空 | 逐组拒绝：`HC_BEFORE_CUTOVER`、`HC_FUTURE_TIME`、`HC_VALUE_OUT_OF_RANGE`、`HC_DUPLICATE_TYPE`、`HC_DUPLICATE_GROUP`、`HC_GROUP_WITHOUT_WEIGHT`、`HC_GROUP_CONFLICT` | 截断点之前的历史被拒是预期；`HC_VALUE_OUT_OF_RANGE` 只针对体重（其他指标越界只是索引为 null）。`HC_GROUP_CONFLICT` 表示同一时刻的已存值与手机不一致，正常数据不会出现：App 会停止推进同步进度。轮换令牌只能阻止继续写入，冲突本身来自库里已有的组，按第 9 节“冲突处理”清理后才能恢复 |
 | `SYNC_IN_PROGRESS` | 已有任务或处于冷却（增量 60 秒、全量 24 小时） | 按 `retry_after_seconds` 等待 |
 | `RATE_LIMITED` / HTTP 429 | `/mcp` 每 owner 120 次 HTTP 请求/分（含 tools/list 等）；工具读 60/分、写 20/分；`/authorize` 10/分/IP、token 20/分 | 等待；异常增长时检查是否有脚本循环调用 |
 | `REVISION_CONFLICT` | 会话已被其他写入推进 | 先 `get_open_workout_sessions` 读回 revision，确认内容后用**新**幂等键重写 |
@@ -186,6 +190,47 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 4. 删除所有加密备份与私钥。
 5. D1 Time Travel 与平台内部保留期内可能仍有副本，删除后等待保留期结束，不能声称单条 SQL 已清除所有副本。
 
+## 9. Health Connect 推送
+
+体测由手机上的“身迹同步”（`android/`）读取 FitDays+ 写入 Health Connect 的记录，推送到 `POST /ingest/health-connect`。规则见 DATA_CONTRACT 第 8 节与 `research/HEALTHCONNECT.md` 第 3 节。
+
+| 配置 | 位置 | 当前值 |
+| --- | --- | --- |
+| `HC_ACCEPT_AFTER` | vars | `2026-09-15T09:17:00+08:00`（旧 FitDays 最后一条测量；不晚于它的 HC 组不入库） |
+| `HC_PROFILE_REF` | vars | `p_914ea14c79915f2f`（本人现有 profile，趋势不断档） |
+| `HC_HEIGHT_CM` | vars | `164`（推算 BMI；FitDays+ 不写 BMI。改身高后只有新产生的版本用新值） |
+| `HC_INGEST_TOKEN_SHA256` | secret | 令牌的 SHA-256 小写十六进制；未设置时端点返回 404 |
+
+**生成并保存令牌**（在自己的 PowerShell 7 里运行，令牌只在变量里，不落盘、不进命令历史；先部署带推送端点的代码）：
+
+```powershell
+$ingestToken = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+$ingestHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($ingestToken))).ToLower()
+$ingestHash | npx wrangler secret put HC_INGEST_TOKEN_SHA256
+# 手机直连电脑，打开“身迹同步”，点一下“推送令牌”输入框，再运行：
+adb shell input text $ingestToken
+Remove-Variable ingestToken, ingestHash
+```
+
+然后在手机上点“保存令牌”，App 会立刻同步一次。`adb shell input text` 运行期间令牌会短暂出现在手机 shell 的进程参数里。
+
+**日常**：称重后打开“身迹同步”即自动推送（V1 没有后台任务）。在 FitDays+ 里删除称重不会同步；要从 Kinetrail 去掉误测，到系统 Health Connect 的数据页删除那次的体重记录，再打开 App 同步。
+
+**检查**（只看结构与计数）：
+
+```bash
+npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_json, error_code, created_at FROM sync_batches WHERE source_region = 'health_connect' ORDER BY created_at DESC LIMIT 5"
+```
+
+**冲突处理**（App 提示 `HC_GROUP_CONFLICT`）：正常数据不会出现冲突，出现时按令牌泄漏处理。
+
+1. 按第 6 节轮换令牌，阻止继续写入。
+2. 找出可疑批次与被占用的时刻（只看结构）：`SELECT id, created_at, counts_json FROM sync_batches WHERE source_region = 'health_connect' ORDER BY created_at DESC LIMIT 20`，再用批次 id 查 `raw_record_versions` 的 `source_record_id` 与 `measured_at`，和手机 HC 里的真实称重对照。
+3. 端点无法删除 HC 里不存在的记录，注入的组需要一次性脚本经暂存/发布写 tombstone 版本（或按 `scripts/purge-non-owner-profiles.sql` 的方式物理删除）。两种都会改变线上事实数据，**执行前必须单独征得用户授权**；目前没有现成脚本。
+4. 清理后打开 App 重新同步；手机 token 一直未推进，真实数据会补齐。若停住超过 30 天，HC 变更记录过期，App 退回首次同步，期间在 HC 里做的删除需要人工核对。
+
+**上线后**：确认推送正常后删除 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（`wrangler secret delete`），防止任何路径再登录 FitDays+。
+
 ## 验证记录
 
 | 日期 | 范围 | 结论 |
@@ -201,4 +246,6 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | 2026-09-15 | G3 权限不足重授权：旧 token 只有 body:read/workout:read，`record_workout_event` 得 `INSUFFICIENT_SCOPE`；ChatGPT 引导重新授权，consent 授予 3 个 scope 后同一写入成功 | 通过；拒绝授权、撤销、过期 401 仍未测 |
 | 2026-09-15 | G4/G5（部分）：“减肥计划”聊天 A 补记 9/14 的真实训练，`record_workout_event`（6 个动作）+ `finalize_workout_session`，revision 0→1→2，2 张收据与事件的幂等键和 payload hash 一一对应；未说单位的 ROW 负重保留原值、标 `unknown_load_unit`，未擅自换算。新聊天 B 未粘贴 A 内容，经 `get_workout_history` 读回同一会话的全部组、原话备注与汇总。发现：B 的前 3 次调用传了超过 20 的 limit 被 `INVALID_INPUT` 拒绝（上限只在契约里、工具描述没写，已补描述与测试）；手表整场汇总被记成 `other` 动作（不计入统计，项目指令已补规则） | 部分通过；计划类表达不写入、到场建空会话、amend 纠错、结束后追加被拒/reopen、超时同键重试均未测 |
 | 2026-09-15 | 顶号排查：FitDays 主账号连续登录 4 次（含 os_type=0/1），每次新登录让旧 token `10000 token无效`；FitDays+ 测试账号同样如此；FitDays+ 账号登不上任何 FitDays 服务器。静态分析 FitDays+ 1.14.1 还原登录/签名/读取请求，测试账号在 plus-cn 登录与读取成功（`research/FITDAYSPLUS.md`） | 顶号为上游单会话策略，无法绕过；已关闭周期同步 |
+| 2026-09-15 | Health Connect 核实关卡（手机一加 PJZ110，ColorOS 16.0.10 / Android 16）：G-HC1 FitDays+ 为 Play 安装的 Google 渠道包、dex 与分析样本一致、HC 权限已授予；G-HC2 称重后 HC 出现同一时刻 6 条记录；G-HC3 只有主用户写入；G-HC4 称重当下写入、联网不重复、App 内删除不同步（`research/HEALTHCONNECT.md` 第 5 节） | 通过 |
+| 2026-09-15 | 推送端点本地验证：`npm run check` 96 个测试通过；合并不可变、已删不复活、令牌校验、HC 批次不重排四条规则分别临时撤掉后对应测试失败；dry-run bundle 411 KiB、无 `eval`/`new Function`；手机端 0.2.0 构建通过 | 通过；未部署，真机推送未测 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |

@@ -1,4 +1,4 @@
-// 19 个工具的中文标题、描述与处理函数。schema/annotations/scope 来自 schemas.ts（契约）。
+// 18 个工具的中文标题、描述与处理函数。schema/annotations/scope 来自 schemas.ts（契约）。
 
 import type { ToolDefinition } from './mcp'
 import {
@@ -9,7 +9,6 @@ import {
   getSyncStatus,
   listDevices,
   listProfiles,
-  refreshData,
 } from './queries'
 import { getProgressOverview, getTrainingTrend, getTrend } from './trends'
 import {
@@ -30,13 +29,13 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: 'get_latest_measurement_full',
     title: '最新完整体测',
-    description: `读取本地镜像中最新一次有效体测的完整原始记录，含 ext_data 原文与解析结果、阻抗/心率/平衡/重心的候选关联记录。只读，不访问 FitDays；需要新数据时先调用 refresh_data。${BIA_NOTE}`,
+    description: `读取本地镜像中最新一次有效体测的完整原始记录，含 ext_data 原文与解析结果、阻抗/心率/平衡/重心的候选关联记录。只读；体测由手机经 Health Connect 推送，服务端不主动拉取。${BIA_NOTE}`,
     handler: getLatestMeasurementFull,
   },
   {
     name: 'get_measurements',
     title: '体测记录',
-    description: `按时间范围分页读取体测。默认 summary；full 每页最多 25 条。默认排除 FitDays 标记删除的记录，include_deleted=true 可查看 tombstone。${RANGE_NOTE}${BIA_NOTE}`,
+    description: `按时间范围分页读取体测。默认 summary；full 每页最多 25 条。默认排除来源已删除的记录，include_deleted=true 可查看 tombstone。${RANGE_NOTE}${BIA_NOTE}`,
     handler: getMeasurements,
   },
   {
@@ -54,13 +53,14 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: 'get_sync_status',
     title: '同步状态',
-    description: '返回最后成功同步时间、最近尝试、覆盖范围、各数据集计数与脱敏错误码。',
+    description:
+      '返回最后一次成功写入体测（手机推送或早期 FitDays 同步）的时间、最近尝试、覆盖范围、各数据集计数与脱敏错误码。stale=true 表示超过 36 小时没有新的推送。',
     handler: getSyncStatus,
   },
   {
     name: 'list_profiles',
     title: '测量成员',
-    description: '列出 FitDays 账户下的测量成员 profile_ref 与名称，用于其他体测工具的 profile_ref 参数。',
+    description: '列出测量成员 profile_ref 与名称，用于其他体测工具的 profile_ref 参数。',
     handler: listProfiles,
   },
   {
@@ -74,13 +74,6 @@ export const TOOLS: ToolDefinition[] = [
     title: '体测趋势',
     description: `体重、体脂率、脂肪量、去脂体重趋势。先按自然日（默认 Asia/Shanghai）取当日中位数，再对周期内有数据的日等权平均；脂肪量按单次测量先算再聚合。group_key：period=周期值，ma7=最近 7 个日历日均值（仅 interval=day），pop_change/pop_change_pct=与上一周期对比（仅 week/month）。只描述观察结果，不作因果推断。${RANGE_NOTE}${BIA_NOTE}`,
     handler: getTrend,
-  },
-  {
-    name: 'refresh_data',
-    title: '刷新 FitDays 数据',
-    description:
-      '从 FitDays 只读拉取数据并更新 Kinetrail 本地镜像，不会写入或删除 FitDays 数据。返回同步任务状态：queued 只表示已接受，不代表数据已更新，结果用 get_sync_status 查询。incremental 冷却 60 秒，full 冷却 24 小时。',
-    handler: refreshData,
   },
   {
     name: 'get_open_workout_sessions',

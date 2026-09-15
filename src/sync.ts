@@ -33,7 +33,8 @@ export const SYNC_POLICY = {
   maxAttempts: 3,
   periodicIncrementalMs: 6 * 3600_000,
   periodicFullMs: 7 * 86_400_000,
-  staleAfterMs: 15 * 60_000,
+  /** 体测改为手机推送后，超过 36 小时没有成功发布才算过期（15 分钟是 FitDays 定时拉取时的取值）。 */
+  staleAfterMs: 36 * 3600_000,
 }
 
 type Mode = 'initial_full' | 'incremental' | 'reconciliation_full'
@@ -142,7 +143,7 @@ export function planWindows(
   return windows
 }
 
-async function acquireLease(
+export async function acquireLease(
   db: D1Database,
   ownerId: string,
   holder: string,
@@ -280,14 +281,23 @@ export async function scheduledSync(env: Env, deps: Deps, options: RunOptions = 
   const now = deps.now()
   const expired = await db
     .prepare(
-      `SELECT b.id, b.mode, b.attempts, b.owner_id, b.generation FROM sync_batches b JOIN sync_lease l ON l.owner_id = b.owner_id
+      `SELECT b.id, b.mode, b.attempts, b.owner_id, b.generation, b.source_region FROM sync_batches b
+       JOIN sync_lease l ON l.owner_id = b.owner_id
        WHERE b.state = 'staging' AND (l.holder IS NULL OR l.holder != b.id OR l.expires_at < ?)`,
     )
     .bind(now)
-    .all<{ id: string; mode: Mode; attempts: number; owner_id: string; generation: number }>()
+    .all<{
+      id: string
+      mode: Mode
+      attempts: number
+      owner_id: string
+      generation: number
+      source_region: string | null
+    }>()
   for (const row of expired.results) {
     await failBatch(db, row.owner_id, row.id, row.generation, 'INCOMPLETE_SYNC', now)
-    if (row.attempts < SYNC_POLICY.maxAttempts) {
+    // Health Connect 推送由设备重发，不能在这里重排成 FitDays 拉取任务（那会登录 FitDays+ 并顶掉手机）。
+    if (row.source_region !== 'health_connect' && row.attempts < SYNC_POLICY.maxAttempts) {
       // 重试用新的 batch_id：被截断的旧尝试即使还在跑，也无法发布或清理新尝试的暂存。
       await db
         .prepare(

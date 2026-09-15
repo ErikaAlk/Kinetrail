@@ -19,6 +19,11 @@ export default defineConfig({
           FITDAYS_LOGIN: 'synthetic-login-value', // SYNTHETIC-SECRET
           FITDAYS_PASSWORD: 'synthetic-password-value', // SYNTHETIC-SECRET
           FITDAYS_REGION: 'cn',
+          HC_ACCEPT_AFTER: '2026-06-01T00:00:00+08:00',
+          HC_PROFILE_REF: 'p_hc_test_owner',
+          HC_HEIGHT_CM: '164',
+          // sha256('synthetic-ingest-token-value-0000000000')
+          HC_INGEST_TOKEN_SHA256: '314d8fe461b297e7ef3b7485852134eb38e3f89f4ca69b2dad3438c91f9a8d26', // SYNTHETIC-SECRET
         },
       },
     })),
