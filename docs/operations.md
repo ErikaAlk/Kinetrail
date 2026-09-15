@@ -198,6 +198,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | --- | --- | --- |
 | `HC_ACCEPT_AFTER` | vars | `2026-09-15T09:17:00+08:00`（旧 FitDays 最后一条测量；不晚于它的 HC 组不入库） |
 | `HC_PROFILE_REF` | vars | `p_914ea14c79915f2f`（本人现有 profile，趋势不断档） |
+| `HC_HEIGHT_CM` | vars | `164`（推算 BMI；FitDays+ 不写 BMI。改身高后只有新产生的版本用新值） |
 | `HC_INGEST_TOKEN_SHA256` | secret | 令牌的 SHA-256 小写十六进制；未设置时端点返回 404 |
 
 **生成并保存令牌**（在自己的 PowerShell 7 里运行，令牌只在变量里，不落盘、不进命令历史；先部署带推送端点的代码）：

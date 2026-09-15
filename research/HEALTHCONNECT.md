@@ -191,7 +191,7 @@ Schema（全部 `additionalProperties:false`，没有自由字符串）：`schem
 | `source_record_id` | `hc:cn.icomon.fitdayspro:<time_ms>`，`identity_kind='source_id'`；`source_data_id` 存体重记录的 `hc_id` |
 | `raw_json` | 规范化整组 `{source, origin, time_ms, zone_offset_seconds, records, deleted_records}`：记录按 `(type, hc_id)` 码点排序，保留 HC 返回的 double 原值。内容相同 → `raw_hash` 相同 → 只更新 `last_seen`，重发天然幂等，不需要收据表 |
 | `measured_at` / `local_date` | `floor(time_ms / 1000)`；本地日期按 Asia/Shanghai |
-| `metrics_json` | `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制（63.099998474121094 → 63.1）；`body_water_pct` = 水分质量 ÷ 体重 × 100 保留 2 位小数，标 `body_water_pct_derived_from_mass`。去脂体重与水分质量只在 raw 里，不新增索引指标；`formula_version` 仍为 `body_v1` |
+| `metrics_json` | `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制（63.099998474121094 → 63.1）；`body_water_pct` = 水分质量 ÷ 体重 × 100 保留 2 位小数，标 `body_water_pct_derived_from_mass`；`bmi` = 体重 ÷ (`HC_HEIGHT_CM`/100)² 保留 1 位小数（用户提供身高 164 cm，2026-09-15），标 `bmi_derived_from_height`。去脂体重与水分质量只在 raw 里，不新增索引指标；`formula_version` 仍为 `body_v1` |
 | `quality_flags` | 恒含 `source_health_connect` |
 | `is_deleted` | 组内没有有效体重记录时为 1（整次测量作废，默认查询排除，`include_deleted` 可见 tombstone） |
 
@@ -240,7 +240,7 @@ Schema（全部 `additionalProperties:false`，没有自由字符串）：`schem
 | 维度 | FitDays+ 适配器（`wip/fitdaysplus-adapter`） | HC 推送 |
 | --- | --- | --- |
 | 顶号 | 每次刷新顶掉手机一次，无法绕过 | 不登录，无 |
-| 新数据字段 | weight_kg、bmi、pbf、原始 imps | weight、体脂率、水分、骨量、BMR、去脂体重、心率（无 BMI） |
+| 新数据字段 | weight_kg、bmi、pbf、原始 imps | weight、体脂率、水分、骨量、BMR、去脂体重、心率（BMI 由服务端按身高推算） |
 | 历史回填 | 能拉云端全量（含迁移过来的历史） | 不能；只有开关打开后的新称重 |
 | 修改/删除 | 有 `*_delete_list`（语义未核实） | 不跟随 |
 | 其他成员 | 需要 `PROFILE_ALLOWLIST` 过滤 | FitDays+ 只写主用户 |

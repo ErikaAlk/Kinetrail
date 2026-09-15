@@ -252,7 +252,7 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 
 **范围**：体重不在 (2, 400] kg 整组拒绝；其他类型越界时 raw 照存、该指标索引为 null 并标 `<type>_out_of_range`。
 
-**raw 与索引**：raw 为规范化整组（记录按类型、hc_id 码点排序，保留 HC 返回的 double 原值与 `last_modified_ms`、已删 id 列表）。索引 `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制；`body_water_pct` 由水分质量 ÷ 体重派生、保留 2 位小数并标 `body_water_pct_derived_from_mass`；恒标 `source_health_connect`。与旧 FitDays 记录相比没有肌肉率、骨骼肌率、蛋白质、皮下脂肪、内脏脂肪、身体年龄、BMI，缺失指标不以 0 填补。
+**raw 与索引**：raw 为规范化整组（记录按类型、hc_id 码点排序，保留 HC 返回的 double 原值与 `last_modified_ms`、已删 id 列表）。索引 `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制；`body_water_pct` 由水分质量 ÷ 体重派生、保留 2 位小数并标 `body_water_pct_derived_from_mass`；`bmi` = 体重 ÷ (`HC_HEIGHT_CM` / 100)² 保留 1 位小数，标 `bmi_derived_from_height`（FitDays+ 不写 BMI；身高缺失或不在 (50, 250] 时不算；改身高只影响之后新产生的版本）；恒标 `source_health_connect`。与旧 FitDays 记录相比没有肌肉率、骨骼肌率、蛋白质、皮下脂肪、内脏脂肪、身体年龄，缺失指标不以 0 填补。
 
 **版本与删除**：已存 `hc_id` 的类型、值、修改时间与组的时区偏移不可变，冲突整组拒绝；只能补齐组内从未出现过的类型。HC 删除（`deleted_hc_ids`）把整条记录移入组的 `deleted_records` 并写新版本，删体重即 `is_deleted=1`；已删 id 与已删类型都不再接收；不物理删除。这是“来源明确 tombstone 才产生删除版本”（第 3 节）在 HC 来源上的实现。
 

@@ -203,7 +203,13 @@ const METRICS: Partial<Record<HcType, string>> = {
   heart_rate: 'heart_rate_bpm',
 }
 
-async function prepare(group: HcGroup, profileRef: string): Promise<PreparedRecord> {
+/** HC_HEIGHT_CM：本人身高（cm），用于推算 BMI；缺失或不在 (50, 250] 时不算。 */
+export const heightCm = (env: Env): number | null => {
+  const value = Number(env.HC_HEIGHT_CM)
+  return Number.isFinite(value) && value > 50 && value <= 250 ? value : null
+}
+
+async function prepare(group: HcGroup, profileRef: string, height: number | null): Promise<PreparedRecord> {
   const rawText = JSON.stringify(group)
   const flags = new Set(['source_health_connect'])
   const values = new Map<HcType, number>()
@@ -221,6 +227,11 @@ async function prepare(group: HcGroup, profileRef: string): Promise<PreparedReco
   if (weight !== undefined && water !== undefined) {
     metrics.body_water_pct = Math.round((water / weight) * 10_000) / 100
     flags.add('body_water_pct_derived_from_mass')
+  }
+  // FitDays+ 不往 HC 写 BMI；按配置的身高推算，与旧 FitDays 记录一样保留 1 位小数。
+  if (weight !== undefined && height !== null) {
+    metrics.bmi = Math.round((weight / (height / 100) ** 2) * 10) / 10
+    flags.add('bmi_derived_from_height')
   }
   const measuredAt = Math.floor(group.time_ms / 1000)
   return {
@@ -357,7 +368,8 @@ export async function ingestHealthConnect(
       )
     }
 
-    const records = await Promise.all([...next.values()].map((g) => prepare(g, profileRef)))
+    const height = heightCm(env)
+    const records = await Promise.all([...next.values()].map((g) => prepare(g, profileRef, height)))
     const prepared = {
       manifests: [],
       records,

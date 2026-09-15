@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createWorker } from '../src/index'
 import {
   type HcRecord,
+  heightCm,
   INGEST_PATH,
   type IngestPayload,
   ingestHealthConnect,
@@ -86,9 +87,15 @@ describe('Health Connect 推送：合并与发布', () => {
       bone_mass_kg: 3.4,
       bmr_kcal: 1473,
       body_water_pct: 59.4,
+      // 63.1 / 1.64² = 23.46
+      bmi: 23.5,
     })
     expect(m.quality_flags).toEqual(
-      expect.arrayContaining(['source_health_connect', 'body_water_pct_derived_from_mass']),
+      expect.arrayContaining([
+        'source_health_connect',
+        'body_water_pct_derived_from_mass',
+        'bmi_derived_from_height',
+      ]),
     )
     // 记录顺序不同也是同一内容。
     expect(await ingest(owner, payload([group(T1, [...REAL].reverse())]))).toMatchObject({
@@ -226,6 +233,25 @@ describe('Health Connect 推送：合并与发布', () => {
       .run()
     expect(await ingest(other, payload([group(T1, REAL)]))).toBe('profile_mismatch')
     expect(await versionCount(other)).toBe(0)
+  })
+
+  it('BMI 按配置身高推算；身高缺失或不合理时不算', async () => {
+    expect(heightCm({ ...env, HC_HEIGHT_CM: '164' })).toBe(164)
+    expect(heightCm({ ...env, HC_HEIGHT_CM: '' })).toBeNull()
+    expect(heightCm({ ...env, HC_HEIGHT_CM: '1640' })).toBeNull()
+    const owner = crypto.randomUUID()
+    await ingestHealthConnect(
+      { ...env, HC_HEIGHT_CM: '' },
+      owner,
+      PROFILE,
+      CUTOVER,
+      payload([group(T1, REAL)]),
+      deps(noFetch, c.now),
+    )
+    const [m] = await summaries(owner)
+    expect(m.metrics.weight_kg).toBe(63.1)
+    expect(m.metrics.bmi).toBeUndefined()
+    expect(m.quality_flags).not.toContain('bmi_derived_from_height')
   })
 
   it('lease 被占用时返回 busy，不写入', async () => {
