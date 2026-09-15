@@ -130,6 +130,62 @@ describe('测量链：保真与 null 语义', () => {
     expect(batch.manifest_json).not.toContain('someone@example.com')
   })
 
+  it('未知数据集为空数组时只记结构，不标 partial', async () => {
+    const id = owner()
+    const c = clock()
+    const jobId = await sync(id, { ...baseData(), report_list: [] }, c)
+    const batch = await env.DB.prepare('SELECT manifest_json, state FROM sync_batches WHERE id = ?')
+      .bind(jobId)
+      .first<Loose>()
+    expect(batch.state).toBe('published')
+    expect(JSON.parse(batch.manifest_json)[0].unknownDatasets.report_list).toEqual({
+      presence: 'array',
+      count: 0,
+      keys: {},
+    })
+  })
+
+  it('成员白名单：其他成员和无 suid 的记录、昵称都不落库，其内容也不让批次 partial', async () => {
+    const id = owner()
+    const c = clock()
+    // 与 src/measurements.ts 的 refOf 相同算法；分隔符用 fromCharCode 避免源码里出现 NUL 字面量。
+    const ref10 = `p_${(await sha256Hex(`profile${String.fromCharCode(0)}10`)).slice(0, 16)}`
+    const up = upstream(() =>
+      syncBody({
+        weight_list: [
+          weight({ data_id: 'mine' }),
+          weight({ data_id: 'theirs', suid: 20, note: '其他成员的自由文本' }),
+          weight({ data_id: 'no-suid', suid: null }),
+        ],
+        impedance_list: [{ data_id: 'i-theirs', suid: 20, measured_time: 1789344600, impedance: 520 }],
+        users: [
+          { suid: 10, nickname: '本人' },
+          { suid: 20, nickname: '家人昵称' },
+        ],
+      }),
+    )
+    const job = await requestRefresh(env.DB, id, 'full', c.now())
+    await runSyncJob({ ...env, PROFILE_ALLOWLIST: ref10 }, job.job_id, deps(up.fetch, c.now), {
+      secrets: syntheticSecrets(),
+    })
+
+    const batch = await env.DB.prepare('SELECT state, counts_json FROM sync_batches WHERE id = ?')
+      .bind(job.job_id)
+      .first<Loose>()
+    expect(batch.state).toBe('published')
+    expect(JSON.parse(batch.counts_json)).toMatchObject({ weight: 1, impedance: 0, excluded: 3, blocked: 0 })
+    const refs = await env.DB.prepare(
+      'SELECT DISTINCT profile_ref FROM raw_record_versions WHERE owner_id = ?',
+    )
+      .bind(id)
+      .all<{ profile_ref: string }>()
+    expect(refs.results).toEqual([{ profile_ref: ref10 }])
+    const profiles = await env.DB.prepare('SELECT profile_ref, label FROM profiles WHERE owner_id = ?')
+      .bind(id)
+      .all<Loose>()
+    expect(profiles.results).toEqual([{ profile_ref: ref10, label: '本人' }])
+  })
+
   it('超出安全整数的已知指标：索引为 null 并标记，raw 保留原词法', async () => {
     const id = owner()
     const c = clock()

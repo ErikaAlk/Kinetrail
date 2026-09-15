@@ -95,6 +95,8 @@ export interface PreparedBatch {
   profiles: { profile_ref: string; label: string | null }[]
   devices: { device_ref: string; model: string | null; firmware: string | null }[]
   partial: boolean
+  /** 不在成员白名单内、未处理也未落库的记录数。 */
+  excluded: number
 }
 
 export const scalarText = (value: unknown): string | null => {
@@ -250,10 +252,14 @@ const safeLabel = (value: unknown, max: number): string | null => {
   return value.trim().slice(0, max)
 }
 
-/** 纯函数：不接触数据库。解析失败的窗口整体失败，不做部分猜测。 */
+/**
+ * 纯函数：不接触数据库。解析失败的窗口整体失败，不做部分猜测。
+ * allowedProfiles 非空时只保留这些 profile_ref 的记录与成员投影；无 suid 的记录（p_unknown）无法证明归属，除非显式列入否则不保留。
+ */
 export async function prepareWindows(
   windows: CapturedWindow[],
   knownSecrets: Set<string>,
+  allowedProfiles: ReadonlySet<string> | null = null,
 ): Promise<PreparedBatch> {
   const batch: PreparedBatch = {
     manifests: [],
@@ -262,6 +268,12 @@ export async function prepareWindows(
     profiles: [],
     devices: [],
     partial: false,
+    excluded: 0,
+  }
+  const isAllowed = async (suidValue: unknown) => {
+    if (!allowedProfiles) return true
+    const suid = nonEmptyId(suidValue)
+    return allowedProfiles.has(suid ? await refOf('p', suid) : 'p_unknown')
   }
   const profiles = new Map<string, string | null>()
   const devices = new Map<string, { model: string | null; firmware: string | null }>()
@@ -300,7 +312,15 @@ export async function prepareWindows(
       }
       manifest[dataset] = listManifest(list, knownSecrets)
       for (let index = 0; index < list.length; index++) {
-        const sanitized = sanitizeRecord(list[index], dataset, knownSecrets)
+        const item = list[index]
+        // 白名单先于消毒判断：其他成员的记录不处理、不落库，其内容也不会让批次变成 partial。
+        if (
+          !(await isAllowed(item && typeof item === 'object' ? (item as { suid?: unknown }).suid : undefined))
+        ) {
+          batch.excluded++
+          continue
+        }
+        const sanitized = sanitizeRecord(item, dataset, knownSecrets)
         if (sanitized.blocked.length > 0) {
           batch.partial = true
           for (const item of sanitized.blocked) batch.blocked.push({ ...item, dataset, recordIndex: index })
@@ -312,7 +332,8 @@ export async function prepareWindows(
         if (suid && !profiles.has(prepared.profileRef)) profiles.set(prepared.profileRef, null)
       }
     }
-    // 新数据集 fail-closed：不落库、批次 partial，只记结构供分类（DATA_CONTRACT 第 3 条）。
+    // 新数据集 fail-closed：不落库，只记结构供分类（DATA_CONTRACT 第 3 条）。
+    // 只有确实丢弃了内容才标 partial；空数组或 null 没有任何被阻断的数据。
     const unknownDatasets: Record<string, ManifestEntry> = {}
     for (const [k, v] of Object.entries(body)) {
       if (NON_MEASUREMENT_KEYS.has(k) || DATASETS.some((d) => `${d}_list` === k)) continue
@@ -320,7 +341,7 @@ export async function prepareWindows(
       unknownDatasets[name] = Array.isArray(v)
         ? listManifest(v, knownSecrets)
         : { presence: v === null ? 'null' : 'unexpected_type', count: 0, keys: {} }
-      batch.partial = true
+      if (v !== null && !(Array.isArray(v) && v.length === 0)) batch.partial = true
     }
     batch.manifests.push({ window: captured.window, datasets: manifest, unknownDatasets })
 
@@ -329,7 +350,7 @@ export async function prepareWindows(
         if (!user || typeof user !== 'object') continue
         const u = user as Record<string, unknown>
         const suid = nonEmptyId(u.suid)
-        if (suid) profiles.set(await refOf('p', suid), safeLabel(u.nickname, 80))
+        if (suid && (await isAllowed(u.suid))) profiles.set(await refOf('p', suid), safeLabel(u.nickname, 80))
       }
     }
     for (const list of [body.devices, body.bind_device]) {
