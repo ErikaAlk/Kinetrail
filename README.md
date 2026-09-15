@@ -13,7 +13,7 @@
 | 生产 bundle 与官方 MCP Inspector 互通 | 已验证（合成数据，见 `research/production-inspector-results.json`） |
 | 加密 + 签名备份 → 验签解密 → 隔离库恢复 → 校验 | 本地演练通过（含篡改拒绝） |
 | 独立审查（Claude 子代理，四轮） | 各轮发现均已修复并有回归测试；第四轮修复后未再送审 |
-| 云端部署 `https://kinetrail.erikaalk.click`（D1 迁移、Access OIDC 应用、DO alarm 定时调度） | 已部署；本人身份已绑定，ChatGPT 已连接；首次真实同步已发布，批次因未登记数据集 `report_list` 为 partial |
+| 云端部署 `https://kinetrail.erikaalk.click`（D1 迁移、Access OIDC 应用、DO alarm 定时调度） | 已部署；本人身份已绑定，ChatGPT 已连接；真实同步已发布，只存本人（Erika）数据，其他家庭成员数据已删除 |
 | G1 真实 FitDays CN、G2 云端容量与恢复、G3 真实 Access/CIMD/ChatGPT、G4/G5 “减肥计划”双聊天 | **未验证** |
 
 未通过 G1–G5 前不是生产可用版本。

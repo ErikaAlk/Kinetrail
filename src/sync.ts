@@ -38,6 +38,15 @@ export const SYNC_POLICY = {
 
 type Mode = 'initial_full' | 'incremental' | 'reconciliation_full'
 
+/** PROFILE_ALLOWLIST：逗号分隔的 profile_ref；为空时保留全部成员。 */
+export const profileAllowlist = (env: Env): ReadonlySet<string> | null => {
+  const refs = (env.PROFILE_ALLOWLIST ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return refs.length > 0 ? new Set(refs) : null
+}
+
 export interface JobView {
   job_id: string
   state: 'queued' | 'running' | 'completed'
@@ -203,7 +212,7 @@ export async function runSyncJob(
     )
     const secrets = options.secrets ?? envSecrets(env)
     const fetched = await fetchSyncWindows(secrets, windows, deps)
-    const prepared = await prepareWindows(fetched.windows, fetched.knownSecrets)
+    const prepared = await prepareWindows(fetched.windows, fetched.knownSecrets, profileAllowlist(env))
     fetched.knownSecrets.clear()
 
     const staged = await stageBatch(db, ownerId, batchId, generation, prepared, deps.now())
@@ -226,7 +235,12 @@ export async function runSyncJob(
         fetched.region,
         coverage,
         JSON.stringify(prepared.manifests),
-        JSON.stringify({ ...counts, blocked: prepared.blocked.length, versions: staged.versionCount }),
+        JSON.stringify({
+          ...counts,
+          blocked: prepared.blocked.length,
+          excluded: prepared.excluded,
+          versions: staged.versionCount,
+        }),
         JSON.stringify({ profiles: prepared.profiles.length, devices: prepared.devices.length }),
         batchId,
       )
