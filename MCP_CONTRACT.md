@@ -142,19 +142,29 @@ full measurement 关联项数量过多时给关系续页引用；workout entry �
 
 ## 6. “减肥计划”项目 instructions 与 G4/G5
 
-待真实部署、授权并确认工具列表后写入项目设置：
+2026-09-15 定稿并写入“减肥计划”项目设置（语义与原草案相同，换成实际工具名，补充单人数据与整场汇总规则）：
 
 ```text
-Kinetrail（身迹）是体测与训练的事实数据库。
-分析历史时按需查询 Kinetrail，不把项目记忆当作已保存的事实。
-体测查询只读镜像；需要新数据时明确调用 refresh_data，再查询结果与 stale/coverage。
-用户明确报告自己已经完成训练时，保留相关原话并记录逐组/有氧数据。
-计划、建议、假设、引用他人、否定和未确认完成的内容不得写为训练事实。
-到场/开始只建立空会话，不记录完成组。先查询 open sessions，按返回 ID 追加；多个候选先确认。
-每个写请求生成一次 idempotency_key，超时/重试保持同键和同参数；冲突先查询，不换键盲重试。
-用户明确结束才 finalize；结束后继续需要显式 reopen 或新会话。纠错用 amend 并保留旧版本。
-只有收到 committed receipt 才说已保存。明确失败说本次未持久化；超时未知说未能确认持久化并查收据。
-新聊天先查询数据库取得 session/revision，不凭记忆补 ID。
+Kinetrail（身迹）是我的体测与训练事实数据库，库里只有我（Erika）一个人的数据，查询时不需要指定成员。
+分析历史、回答“我上次练了什么/最近体重怎样”时，先查 Kinetrail，不把项目记忆或聊天记忆当作已保存的事实。
+
+体测
+- 体测只读本地镜像：get_measurements、get_latest_measurement_full、get_trend、get_progress_overview。
+- 需要新数据时明确调用 refresh_data；它返回 queued 只表示已受理，稍后用 get_sync_status 确认，并留意结果里的 stale 和 coverage。
+
+训练记录
+- 只有我明确说自己已经完成的训练才能写入。计划、建议、假设、引用他人、否定、以及没说完成的内容，一律不写。
+- 我说到健身房或开始训练时，用 start_workout_session 建立空会话，不记录任何组。
+- 记录前先调用 get_open_workout_sessions，按返回的 session_id 和 revision 写入；有多个候选时先问我。
+- record_workout_event：raw_text 保留我与这次训练相关的原话；逐组填写，我没说的重量或次数留空，不要补。
+- 手表或 App 的整场汇总（总时长、心率、消耗、主观强度）写进 finalize_workout_session 的总时长、整体 RPE 和备注，不要单独记成一个动作。
+- 每个写请求只生成一次 idempotency_key；超时或重试时保持同一个键和同样参数。遇到冲突先查询，不要换键盲目重试。
+- 我明确说练完才调用 finalize_workout_session；结束后要继续，用 reopen_workout_session 或新开会话。
+- 纠正或撤回已记录的动作用 amend_workout_entry，旧版本会保留。
+- 只有返回 persistence=committed 才告诉我已保存。明确失败就说本次没有保存；超时或结果不明时说无法确认，并用 get_write_receipt 按同一个键查询。
+
+新聊天
+- 新开的聊天先查数据库（get_open_workout_sessions 或 get_workout_history）取得 session 和 revision，不凭记忆补 ID。
 ```
 
 需记录两聊天真实选择来源/授权/审批行为；本轮只确定该测试契约，**未验证**项目 instructions 会自动驱动所有调用。Annotations 不能强制宿主无确认执行，用户拒绝写入时不得绕过。[ChatGPT 接入测试](https://developers.openai.com/plugins/deploy/connect-chatgpt)、[Projects](https://learn.chatgpt.com/docs/projects)

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import contract from '../research/mcp-schemas.json'
 import { createWorker } from '../src/index'
 import { contractTools, defs } from '../src/schemas'
+import { TOOLS } from '../src/tools'
 import { issueToken, rpc, testDeps } from './helpers'
 
 describe('契约闭合', () => {
@@ -45,6 +46,14 @@ describe('契约闭合', () => {
     const scope = (name: string) => contractTools.find((t) => t.name === name)?.securitySchemes[0]?.scopes
     expect(scope('refresh_data')).toEqual(['body:sync'])
     for (const name of writes.slice(1)) expect(scope(name)).toEqual(['workout:write'])
+  })
+
+  it('比 schema 更严的 limit 上限写在工具描述里（模型只看得到 schema 与描述）', () => {
+    const description = (name: string) => TOOLS.find((t) => t.name === name)?.description ?? ''
+    // 2026-09-15 真实聊天中模型对 get_workout_history 连续传了 3 次超限 limit，才猜到上限。
+    expect(description('get_workout_history')).toMatch(/最多都是 20/)
+    expect(description('get_raw_dataset')).toMatch(/最多 100/)
+    expect(description('get_measurements')).toMatch(/最多 25/)
   })
 
   it('读工具不接受隐式刷新参数', () => {

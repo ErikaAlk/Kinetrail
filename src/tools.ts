@@ -42,7 +42,7 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: 'get_raw_dataset',
     title: '原始数据集',
-    description: `专家模式：分页读取脱敏后的原始测量记录（weight/impedance/hr/balance/gravity/height/rulers/skip），保留未知字段；不含账户认证字段。measurement_ref 可取某次称重的关联记录。${RANGE_NOTE}`,
+    description: `专家模式：分页读取脱敏后的原始测量记录（weight/impedance/hr/balance/gravity/height/rulers/skip），保留未知字段；不含账户认证字段。measurement_ref 可取某次称重的关联记录。limit 默认 25、最多 100。${RANGE_NOTE}`,
     handler: getRawDataset,
   },
   {
@@ -92,7 +92,7 @@ export const TOOLS: ToolDefinition[] = [
   {
     name: 'get_workout_history',
     title: '训练历史',
-    description: `分页读取已保存的训练事实：逐组力量数据、有氧数据、用户原话、会话总结和修订版本。分析历史时以此为准，不依赖聊天记忆。include_superseded=true 返回被修订或撤回的旧版本。${RANGE_NOTE}`,
+    description: `分页读取已保存的训练事实：逐组力量数据、有氧数据、用户原话、会话总结和修订版本。分析历史时以此为准，不依赖聊天记忆。include_superseded=true 返回被修订或撤回的旧版本。limit 按会话计，默认和最多都是 20。${RANGE_NOTE}`,
     handler: getWorkoutHistory,
   },
   {

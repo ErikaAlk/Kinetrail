@@ -1,5 +1,5 @@
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   plugins: [
@@ -21,5 +21,9 @@ export default defineConfig({
       },
     })),
   ],
-  test: { setupFiles: ['./tests/apply-migrations.ts'] },
+  // .claude/worktrees 下是 Claude Code 在仓库内建的 worktree 副本，不重复跑它们的测试。
+  test: {
+    setupFiles: ['./tests/apply-migrations.ts'],
+    exclude: [...configDefaults.exclude, '.claude/worktrees/**'],
+  },
 })
