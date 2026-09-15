@@ -1,155 +1,173 @@
 // 打开即同步：有令牌、权限齐全时 onStart 自动推送一次；V1 没有后台任务（research/HEALTHCONNECT.md 2.3）。
+// 报告识图：相册选图或从 FitDays+ 分享进来 → 本机 OCR → 核对页 → 先同步再上传（报告只能挂到已入库的称重上）。
 
 package click.erikaalk.kinetrail.hc
 
+import android.content.Intent
+import android.content.res.Configuration
+import android.net.Uri
 import android.os.Bundle
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.text.InputType
-import android.util.Base64
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.IntentCompat
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.lifecycle.lifecycleScope
+import click.erikaalk.kinetrail.hc.report.recognizeReport
+import click.erikaalk.kinetrail.hc.report.toIngestJson
+import click.erikaalk.kinetrail.hc.ui.AppActions
+import click.erikaalk.kinetrail.hc.ui.AppState
+import click.erikaalk.kinetrail.hc.ui.KinetrailApp
+import click.erikaalk.kinetrail.hc.ui.ReportState
+import click.erikaalk.kinetrail.hc.ui.Screen
+import click.erikaalk.kinetrail.hc.ui.UploadState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import java.security.KeyStore
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
+import java.time.ZoneId
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), AppActions {
     private val permissions = TYPES.map { HealthPermission.getReadPermission(it) }.toSet()
     private val prefs by lazy { getSharedPreferences("sync", MODE_PRIVATE) }
-    private lateinit var output: TextView
+    private val state = AppState()
     private var running: Job? = null
+    private var reportAttempt = 0
 
     private val requestPermissions =
         registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
-            if (granted.containsAll(permissions)) sync() else show("读取权限不完整（${granted.intersect(permissions).size}/${permissions.size}）")
+            state.grantedPermissions = granted.intersect(permissions).size
+            if (granted.containsAll(permissions)) sync()
         }
+
+    private val pickImage = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) openReport(uri)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        output = TextView(this).apply { setTextIsSelectable(true) }
-        val tokenInput = EditText(this).apply {
-            hint = "推送令牌"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        val column = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 48, 48, 48)
-            addView(
-                TextView(this@MainActivity).apply {
-                    text = "把 FitDays+ 写入 Health Connect 的体测推送到 Kinetrail。只读取 FitDays+ 的体重、体脂、水分、骨量、基础代谢、去脂体重和心率。"
-                },
-            )
-            addView(tokenInput)
-            addButton("保存令牌") {
-                val token = tokenInput.text.toString().trim()
-                tokenInput.text.clear()
-                if (token.length < 32) return@addButton show("令牌太短，没有保存")
-                TokenStore.save(prefs, token)
-                show("令牌已保存")
-                sync()
-            }
-            addButton("立即同步") { sync() }
-            addView(output)
-        }
-        setContentView(ScrollView(this).apply { fitsSystemWindows = true; addView(column) })
+        enableEdgeToEdge()
+        state.totalPermissions = permissions.size
+        state.lastSyncAt = prefs.getLong(LAST_AT, 0L).takeIf { it > 0 }
+        state.lastSyncMessage = prefs.getString(LAST_MESSAGE, null)
+        state.lastSyncOk = prefs.getBoolean(LAST_OK, true)
+        setContent { KinetrailApp(state, this) }
+        if (savedInstanceState == null) handleShare(intent)
+    }
+
+    // 声明了 uiMode 的 configChanges，切深浅色不重建 Activity；重新套一次，状态栏图标才会跟着换色。
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        enableEdgeToEdge()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShare(intent)
     }
 
     override fun onStart() {
         super.onStart()
-        if (TokenStore.load(prefs) != null) sync(requestIfMissing = false)
-    }
-
-    private fun LinearLayout.addButton(label: String, onClick: () -> Unit) =
-        addView(Button(context).apply { text = label; setOnClickListener { onClick() } })
-
-    private fun show(line: String) {
-        output.append("\n${LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))} $line")
-    }
-
-    // 协程里的异常必须接住，否则整页按钮失效且没有提示。
-    private fun launchSafely(label: String, block: suspend () -> Unit): Job = lifecycleScope.launch {
-        try {
-            block()
-        } catch (e: PushException) {
-            show(e.message.orEmpty())
-        } catch (e: Exception) {
-            show("$label 失败：${e.javaClass.simpleName}")
+        state.tokenSaved = TokenStore.load(prefs) != null
+        lifecycleScope.launch {
+            val client = client()
+            state.grantedPermissions = client?.permissionController?.getGrantedPermissions()?.intersect(permissions)?.size
+            // 自动同步不弹权限页：用户拒绝后回到前台会再次 onStart，弹窗会形成循环。
+            if (state.tokenSaved && state.grantedPermissions == permissions.size) sync()
         }
     }
 
-    private fun client(): HealthConnectClient? {
-        val status = HealthConnectClient.getSdkStatus(this)
-        if (status != HealthConnectClient.SDK_AVAILABLE) {
-            show("Health Connect 不可用（sdkStatus=$status）")
-            return null
-        }
-        return HealthConnectClient.getOrCreate(this)
+    private fun handleShare(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let(::openReport)
     }
 
-    /** 自动同步不弹权限页：用户拒绝后回到前台会再次 onStart，弹窗会形成循环。 */
-    private fun sync(requestIfMissing: Boolean = true) {
+    private fun client(): HealthConnectClient? =
+        if (HealthConnectClient.getSdkStatus(this) == HealthConnectClient.SDK_AVAILABLE) HealthConnectClient.getOrCreate(this) else null
+
+    override fun navigate(screen: Screen) {
+        state.screen = screen
+    }
+
+    override fun requestPermissions() = requestPermissions.launch(permissions)
+
+    override fun pickReport() = pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+
+    override fun saveToken(token: String): Boolean {
+        if (token.length < 32) return false
+        TokenStore.save(prefs, token)
+        state.tokenSaved = true
+        state.screen = Screen.Home
+        if (state.grantedPermissions == permissions.size) sync() else if (state.grantedPermissions != null) requestPermissions()
+        return true
+    }
+
+    override fun sync() {
         if (running?.isActive == true) return
-        running = launchSafely("同步") {
-            val token = TokenStore.load(prefs) ?: return@launchSafely show("请先保存推送令牌")
-            val client = client() ?: return@launchSafely
-            if (!client.permissionController.getGrantedPermissions().containsAll(permissions)) {
-                if (requestIfMissing) requestPermissions.launch(permissions) else show("缺少读取权限，点“立即同步”授权")
-                return@launchSafely
+        running = lifecycleScope.launch { runSync() }
+    }
+
+    /** 协程里的异常必须接住，否则界面停在“同步中”且没有提示。结果写进 prefs，下次打开还能看到。 */
+    private suspend fun runSync() {
+        val token = TokenStore.load(prefs) ?: return
+        val client = client() ?: return
+        if (!client.permissionController.getGrantedPermissions().containsAll(permissions)) return
+        state.syncing = true
+        val (ok, message) = try {
+            true to HealthSync(client, prefs, token).run()
+        } catch (e: PushException) {
+            false to e.message.orEmpty()
+        } catch (e: Exception) {
+            false to "同步失败：${e.javaClass.simpleName}"
+        }
+        state.syncing = false
+        state.lastSyncOk = ok
+        state.lastSyncMessage = message
+        state.lastSyncAt = System.currentTimeMillis()
+        prefs.edit().putLong(LAST_AT, state.lastSyncAt!!).putString(LAST_MESSAGE, message).putBoolean(LAST_OK, ok).apply()
+    }
+
+    private fun openReport(uri: Uri) {
+        state.report = ReportState.Recognizing
+        state.upload = UploadState.Idle
+        state.screen = Screen.Report
+        // 识别中又选了另一张图时，只认最后一次的结果
+        val attempt = ++reportAttempt
+        lifecycleScope.launch {
+            val result = try {
+                ReportState.Parsed(recognizeReport(this@MainActivity, uri))
+            } catch (e: Exception) {
+                ReportState.Failed("图片读不出来（${e.javaClass.simpleName}）")
             }
-            show("同步中…")
-            show(HealthSync(client, prefs, token).run())
+            if (attempt == reportAttempt) state.report = result
         }
     }
-}
 
-/** 推送令牌用 Android Keystore 里不可导出的 AES-GCM 密钥加密后存放。 */
-private object TokenStore {
-    private const val ALIAS = "kinetrail-ingest-token"
-
-    private fun key(): SecretKey {
-        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey(ALIAS, null) as SecretKey?)?.let { return it }
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
-            init(
-                KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .build(),
-            )
-        }.generateKey()
-    }
-
-    fun save(prefs: android.content.SharedPreferences, token: String) {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        val sealed = cipher.doFinal(token.toByteArray())
-        prefs.edit()
-            .putString("token_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .putString("token_ct", Base64.encodeToString(sealed, Base64.NO_WRAP))
-            .apply()
-    }
-
-    fun load(prefs: android.content.SharedPreferences): String? {
-        val iv = prefs.getString("token_iv", null) ?: return null
-        val sealed = prefs.getString("token_ct", null) ?: return null
-        return runCatching {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
-                init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
+    override fun uploadReport() {
+        val report = (state.report as? ReportState.Parsed)?.result?.takeIf { it.uploadable }?.report ?: return
+        val token = TokenStore.load(prefs) ?: return
+        if (state.upload == UploadState.Uploading) return
+        state.upload = UploadState.Uploading
+        lifecycleScope.launch {
+            // 先把 Health Connect 里的称重推上去，报告才有地方挂。
+            running?.join()
+            runSync()
+            val minute = report.measuredAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            state.upload = try {
+                postReport(token, report.toIngestJson(minute)).let { UploadState.Done(it.ok, it.message) }
+            } catch (e: PushException) {
+                UploadState.Done(false, e.message.orEmpty())
+            } catch (e: Exception) {
+                UploadState.Done(false, "上传失败：${e.javaClass.simpleName}")
             }
-            String(cipher.doFinal(Base64.decode(sealed, Base64.NO_WRAP)))
-        }.getOrNull()
+        }
+    }
+
+    private companion object {
+        const val LAST_AT = "last_sync_at"
+        const val LAST_MESSAGE = "last_sync_message"
+        const val LAST_OK = "last_sync_ok"
     }
 }

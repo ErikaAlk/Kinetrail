@@ -200,46 +200,74 @@ class HealthSync(
         for (ids in deletions.chunked(DELETIONS_PER_REQUEST)) send(emptyList(), ids)
     }
 
-    private suspend fun send(groups: List<JSONObject>, deletions: List<String>) = withContext(Dispatchers.IO) {
-        val body = JSONObject()
-            .put("schema_version", "1")
-            .put("groups", JSONArray(groups))
-            .put("deleted_hc_ids", JSONArray(deletions))
-            .toString()
-            .toByteArray()
-        val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
-        try {
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
-            connection.doOutput = true
-            connection.setRequestProperty("authorization", "Bearer $ingestToken")
-            connection.setRequestProperty("content-type", "application/json")
-            connection.setRequestProperty("user-agent", "KinetrailHc/${BuildConfig.VERSION_NAME}")
-            connection.outputStream.use { it.write(body) }
-            val status = connection.responseCode
-            val text = (if (status < 400) connection.inputStream else connection.errorStream)
-                ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (status != 200) {
-                val code = runCatching { JSONObject(text).optString("error") }.getOrNull().orEmpty()
-                throw PushException(
-                    when (status) {
-                        401 -> "令牌无效，请重新保存令牌"
-                        503 -> if (code == "not_configured") "服务端配置不完整（not_configured），需要检查 HC_ACCEPT_AFTER 与 HC_PROFILE_REF" else "服务端忙（503 $code），稍后再同步"
-                        429 -> "请求过于频繁（429），稍后再同步"
-                        else -> "推送失败：HTTP $status $code"
-                    },
-                )
-            }
-            val result = JSONObject(text)
-            for (key in listOf("accepted", "unchanged", "deletions_matched")) {
-                totals[key] = totals.getValue(key) + result.optInt(key)
-            }
-            val rejected = result.optJSONArray("rejected") ?: JSONArray()
-            totals["rejected"] = totals.getValue("rejected") + rejected.length()
-            for (i in 0 until rejected.length()) rejectCodes += rejected.getJSONObject(i).optString("code")
-        } finally {
-            connection.disconnect()
+    private suspend fun send(groups: List<JSONObject>, deletions: List<String>) {
+        val result = postIngest(ingestToken, ingestBody(groups, deletions))
+        for (key in listOf("accepted", "unchanged", "deletions_matched")) {
+            totals[key] = totals.getValue(key) + result.optInt(key)
         }
+        val rejected = result.optJSONArray("rejected") ?: JSONArray()
+        totals["rejected"] = totals.getValue("rejected") + rejected.length()
+        for (i in 0 until rejected.length()) rejectCodes += rejected.getJSONObject(i).optString("code")
+    }
+}
+
+private fun ingestBody(groups: List<JSONObject>, deletions: List<String>, reports: List<JSONObject> = emptyList()) =
+    JSONObject()
+        .put("schema_version", "1")
+        .put("groups", JSONArray(groups))
+        .put("deleted_hc_ids", JSONArray(deletions))
+        .apply { if (reports.isNotEmpty()) put("reports", JSONArray(reports)) }
+
+/** 上传一份识图报告（src/ingest.ts 的 reports[]）。返回给界面的结果；请求级失败抛 [PushException]。 */
+suspend fun postReport(ingestToken: String, reportJson: String): ReportUpload {
+    val result = postIngest(ingestToken, ingestBody(emptyList(), emptyList(), listOf(JSONObject(reportJson))))
+    val code = result.optJSONArray("rejected")?.optJSONObject(0)?.optString("code")
+    return when {
+        code != null -> ReportUpload(false, REPORT_REJECTIONS[code] ?: "服务端没有写入（$code）")
+        result.optInt("accepted") > 0 -> ReportUpload(true, "已写入 Kinetrail，挂到这次称重上")
+        else -> ReportUpload(true, "这份报告已经在 Kinetrail 里了")
+    }
+}
+
+data class ReportUpload(val ok: Boolean, val message: String)
+
+private val REPORT_REJECTIONS = mapOf(
+    "REPORT_NO_MATCH" to "Kinetrail 里没有这一分钟、体重相同的称重，没有写入。报告只能挂到已经同步的称重上：先在 FitDays+ 测量页称重并同步，再上传",
+    "REPORT_AMBIGUOUS" to "这一分钟里有多次体重相同的称重，分不清报告属于哪一次，没有写入",
+    "REPORT_MISMATCH" to "报告的体脂率与这次称重的 Health Connect 记录不一致，没有写入。请核对识别结果",
+    "REPORT_CONFLICT" to "这次称重已经挂着另一份不同的报告，没有覆盖",
+    "REPORT_DUPLICATE" to "同一分钟的报告重复提交，没有写入",
+)
+
+private suspend fun postIngest(ingestToken: String, json: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+    val body = json.toString().toByteArray()
+    val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
+    try {
+        connection.requestMethod = "POST"
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 30_000
+        connection.doOutput = true
+        connection.setRequestProperty("authorization", "Bearer $ingestToken")
+        connection.setRequestProperty("content-type", "application/json")
+        connection.setRequestProperty("user-agent", "KinetrailHc/${BuildConfig.VERSION_NAME}")
+        connection.outputStream.use { it.write(body) }
+        val status = connection.responseCode
+        val text = (if (status < 400) connection.inputStream else connection.errorStream)
+            ?.bufferedReader()?.use { it.readText() }.orEmpty()
+        if (status != 200) {
+            val code = runCatching { JSONObject(text).optString("error") }.getOrNull().orEmpty()
+            throw PushException(
+                when (status) {
+                    401 -> "令牌无效，请重新保存令牌"
+                    400 -> "服务端拒绝了请求格式（400 $code）。如果是上传报告，服务端可能还没更新到支持报告的版本"
+                    503 -> if (code == "not_configured") "服务端配置不完整（not_configured），需要检查 HC_ACCEPT_AFTER 与 HC_PROFILE_REF" else "服务端忙（503 $code），稍后再试"
+                    429 -> "请求过于频繁（429），稍后再试"
+                    else -> "推送失败：HTTP $status $code"
+                },
+            )
+        }
+        JSONObject(text)
+    } finally {
+        connection.disconnect()
     }
 }

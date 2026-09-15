@@ -185,7 +185,7 @@ Schema（全部 `additionalProperties:false`，没有自由字符串）：`schem
 
 | 字段 | 取值 |
 | --- | --- |
-| `sync_batches` | 每次推送一个批次：`mode='incremental'`、`source_region='health_connect'`、`counts_json` 记 `weight`/`rejected`/`deletions_matched`/`deletions_unmatched`；没有有效组也没有删除时不建批次 |
+| `sync_batches` | 每次推送一个批次：`mode='incremental'`、`source_region='health_connect'`、`counts_json` 记 `weight`/`rejected`/`deletions_matched`/`deletions_unmatched`；没有有效组、删除和报告时不建批次（只含报告的请求也建批次，2026-09-15 起） |
 | `raw_records.dataset` | `weight`，现有查询和趋势不用改 |
 | `profile_ref` | 变量 `HC_PROFILE_REF` = 现有本人 `p_914ea14c79915f2f`。依据是 FitDays+ 只为主用户写 HC（静态分析 + G-HC3），且用户改用主用户称重；主用户资料必须是本人的 |
 | `source_record_id` | `hc:cn.icomon.fitdayspro:<time_ms>`，`identity_kind='source_id'`；`source_data_id` 存体重记录的 `hc_id` |
@@ -225,6 +225,7 @@ Schema（全部 `additionalProperties:false`，没有自由字符串）：`schem
 | 威胁 | 缓解 | 残余风险 |
 | --- | --- | --- |
 | 令牌泄漏（手机被攻破、备份、日志） | 端点只写不读；只能动 HC 来源的组；已存值不可变、已删类型不能补回；删除只写新版本；鉴权后全局每分钟 60 次 | 攻击者能注入假测量；能用已知 `hc_id` 把真实测量标成删除（`hc_id` 会出现在 `get_latest_measurement_full`、`get_measurements` full 的 `raw_json` 里，拿到 ChatGPT 对话内容的人可以看到）；能抢先为未来几分钟的每一秒注入假组，让真实称重到达时 `HC_GROUP_CONFLICT`，此时 App 不推进同步进度并提示轮换令牌，真实数据仍在 HC 里可重推。发现后轮换令牌，按 `batch_id` 定位，从版本历史恢复；清理注入数据需用户另行授权 |
+| 令牌泄漏后借识图报告写入（2026-09-15 起） | 报告只能挂到已存在、体重相同、恰好一组的称重上；体脂率要与 HC 记录（含已删的）一致；不覆盖、也不填回 HC 有过的类型；一次称重只能挂一份，挂上后不可变；schema 只有数字与范围 | 攻击者能对任意已发布的真实称重（体重可从 MCP 输出看到）抢先挂一份假报告，写入肌肉率、内脏脂肪等 HC 没有的指标，之后真报告只会得到 `REPORT_CONFLICT`，这些指标在趋势里被长期污染。发现后轮换令牌，按 `batch_id` 定位，从版本历史恢复；清理需用户另行授权 |
 | 暴力猜令牌 | 256 位随机；按 IP 限流，失败也计数；全局计数在鉴权之后，未授权请求挤不掉设备额度 | 无实际风险 |
 | 大包、深嵌套、数值异常 | 解析前 64 KiB 有界读取、严格 schema、组数与记录数上限、取值范围 | — |
 | 重放 | 内容相同即 `unchanged`；已删 id 不复活 | — |
@@ -329,3 +330,35 @@ Schema（全部 `additionalProperties:false`，没有自由字符串）：`schem
 没能在命令行里看到 HC 里已有的记录：`dumpsys healthconnect` 无输出，`cmd healthconnect` 没有实现。App 内开关（账户设置 `HealthConnect`）的值需要 root 才能读，没有核实；权限全部授予说明开关流程至少走过一次。
 
 G-HC2 到 G-HC4 要看记录 ID 和精确时间戳时，用第 2 节的最小读取 App（调试版，侧载）在手机上读一遍，或在平板上用测试账号复现后以 root 读 HC 数据库。平板复现不代表手机渠道包的行为，G-HC1 必须在手机上做。
+
+## 6. 识图报告（2026-09-15，Opus 5）
+
+用户希望把 FitDays+ 每次称重后的「人体成分分析报告」图片作为数据来源：HC 里没有的肌肉、骨骼肌、蛋白质、皮下脂肪、内脏脂肪、身体年龄、分段脂肪/肌肉和生物电阻抗，报告上都有。规范规则见 DATA_CONTRACT 第 8 节「识图报告」，这里记依据与取舍。
+
+### 依据（静态分析，同一份 1.14.1 反编译）
+
+- 报告是 `ICAFReportDataShowActivity` 调 `ICERDrawReport`（`b.b` 画布）画出来的位图，标题栏有分享按钮，版式固定。
+- 检测时间：`setTest_time(p.b.H(measure_time))`，`H()` 在中文下是 `SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())`，按设备时区截断到分钟。HC 写入用的是同一个 `measure_time` 秒值，所以“同一分钟 + 体重相同”能唯一对应到一组 HC 记录；报告时间不会四舍五入到下一分钟。
+- 线上 D1 里有 20:42:50 与 20:43:44 两组数值完全相同的称重（2026-09-15），报告 20:43 按截断只对应后一组。如果按四舍五入，两组都可能是 20:43——这也是多候选时必须拒绝的原因。那份报告的体重 63.90、体脂率 19.3%、骨量 3.5、基础代谢 1484、去脂体重 51.7 与该组 HC 记录逐项一致。
+- 报告数值的来源：脂肪量 = pbf × 体重 / 100，蛋白质、水分、骨骼肌量同样由百分比乘体重算出；分段读数来自 `ICAFElectrode`，左列画左臂/左腿；阻抗来自 `K(imps)`，会重排并对部分分段乘 0.826，有 15 个值时多画一行 5 kHz。
+
+### 识图放在手机上
+
+| 方案 | 结论 |
+| --- | --- |
+| 手机本机 ML Kit 中文文字识别（模型打进 APK） | **采用**。图片不出手机，服务端请求里仍然只有数字；离线、免费；确定性解析 + 报告内交叉校验，读错一位小数几乎总会破坏某条算术关系 |
+| Worker 调视觉大模型 | 不采用：要上传含健康数据的图片、请求超过 64 KiB 上限，模型可能编出看似合理的数字，而这些值写入后不可改 |
+| 服务端 OCR（如 parts-manager 的 rapidocr） | Worker 跑不了 |
+
+解析按“分区标题 + 同一行右侧数字”取值，不按绝对像素。上传前的交叉校验：六项成分的 kg ÷ 体重 ≈ 百分比（±0.2）、去脂体重 ≈ 体重 − 脂肪量、体重控制 ≈ 目标体重 − 体重、脂肪控制 + 肌肉控制 ≈ 体重控制、BMI ≈ 体重 ÷ 身高²（均 ±0.15）、各分段 20 kHz 阻抗 > 100 kHz，以及取值范围。任一不过或字段没认全都不许上传。“肥胖度 ≈ 体重 ÷ 目标体重”不成立（107% 对 105.6%），没有用。
+
+### 模拟器实测（Pixel 9 / Android 16，ML Kit text-recognition-chinese 16.0.1）
+
+没有拿到原图文件，用 `android/tools/report-replica.py` 按报告版式与 Noto Serif SC 画了一张近似图，在模拟器上经相册选图识别，调试版导出的文本行存为 `android/app/src/test/resources/mlkit-replica-ocr.json` 做回归测试。第一次整页识别失败，读错的情况：
+
+- 形近字：体→休（身休得分、目标休重）、控→挖（体重挖制）、肉→內 或 内（肌內均衝、肌内型）、衡→衝。解析时先换回形近字，四字以上标签再容忍一个字读错（同一分区的标签彼此至少差两个字）。
+- 表格边线读成行首「|」（|其它指标、|年龄:19）。
+- 「77/100分」整行读成「77n00」；「%」读成「96」「9%」「°%」（100.2°%）。
+- 单元格基本各自成行，数字和小数点在这份近似图上都读对了。
+
+**尚未验证**：FitDays+ 分享出来的真实图片（分辨率、字体渲染、是否带分享水印），以及一加 13 真机上的识别结果。真机第一次跑时用调试版导出 `files/last-ocr.json`（`adb shell run-as click.erikaalk.kinetrail.hc cat files/last-ocr.json`）对照调整，并把去掉身份信息的结果补进测试。
