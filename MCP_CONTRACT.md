@@ -177,6 +177,7 @@ Kinetrail（身迹）是体测与训练的事实数据库。
 - `get_raw_dataset`：没有 measured_time 的记录出现在每个时间范围查询中，排在有时间的记录之后并带 `measured_time_missing`。
 - 同步 `coverage`：真实分窗/截断/端点行为核实前只会是 `unknown`（完整发布）或 `partial`（有阻断或未知数据集），不会写 `verified_window`。
 - `list_profiles` 的 `label` 取 FitDays 成员昵称，没有或形态可疑时为 `未命名成员`。
+- 部署配置了 `PROFILE_ALLOWLIST` 时库里只有白名单成员（当前只有本人），`list_profiles` 只返回这些成员，省略 `profile_ref` 时自动选中唯一成员，不会出现 PROFILE_REQUIRED。
 - `refresh_data`：FitDays 凭据未配置时直接 `FITDAYS_LOGIN_FAILED`，不创建任务。冷却：增量 60 秒、首次全量（没有检查点，含首批失败或 partial 后）10 分钟、校准全量 24 小时。
 
 **趋势**

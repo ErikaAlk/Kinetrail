@@ -229,6 +229,8 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 **同步**
 
 - 窗口 180 天、相邻窗口重叠 1 天、最新端点为当前时间 +1 天；增量从上个完整批次的检查点往前重叠 7 天。partial 批次不推进检查点。
+- 成员白名单（2026-09-15，用户决定只存本人）：`PROFILE_ALLOWLIST` 非空时，只处理其中 profile_ref 的记录与 users 昵称，判断先于消毒；其他成员与无 suid（`p_unknown`，无法证明归属）的记录不落库、不计入 blocked、不使批次 partial，计数写入 `counts_json.excluded`。为空时保留全部成员。已入库的其他成员数据由一次性脚本 `scripts/purge-non-owner-profiles.sql` 物理删除（事实表“不物理删除”的唯一例外，经用户明确授权）。
+- 未知数据集为空数组或 null 时只记入 manifest，不标 partial；有内容才 fail-closed 并标 partial。manifest 对未知数据集记形态、条数、键名、类型，不记值。
 - 每次尝试一个 batch_id；暂存分多个 D1 batch 写入（未发布不可见），发布为单个 D1 batch（lease 守卫 + 置已发布 + last_seen + 投影 + sync_meta + 批次状态 + 释放 lease）。
 - stale：从未成功、最后成功超过 15 分钟，或最后一次尝试失败晚于最后成功。
 

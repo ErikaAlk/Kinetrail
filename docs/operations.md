@@ -15,6 +15,7 @@
 | Access for SaaS | 应用 `Kinetrail`（`d97f5f5e-172c-4443-b65f-0b0e863449d6`），IdP 邮箱验证码，策略“邮箱白名单”（与 dsh 相同的两个邮箱），PKCE + client secret |
 | 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY`、`FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION` |
 | 本人绑定 | `OWNER_OIDC_SUB` 已写入 vars（邮箱验证码登录得到的 sub；换登录邮箱会得到不同 sub，需重新绑定） |
+| 成员范围 | `PROFILE_ALLOWLIST` = `p_914ea14c79915f2f`（FitDays 成员 Erika）；同一账户下其他 5 个成员与无 suid 的记录不落库，历史数据已于 2026-09-15 物理删除 |
 | 定时调度 | Durable Object `SyncScheduler`（SQLite 存储，实例名 `scheduler`）的 alarm 每 10 分钟执行一次；本账户 cron 触发器注册成功但从不投递，`*/10` 仍保留 |
 
 ## 1. 组成与数据边界
@@ -94,7 +95,8 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, mode, state, co
 npx wrangler d1 execute kinetrail --remote --command "SELECT dataset, path, value_type, code, COUNT(*) AS n FROM blocked_items GROUP BY 1,2,3,4"
 ```
 
-- manifest 每个窗口的 `unknownDatasets`：上游出现未登记的数据集时整份不落库、批次为 partial，这里只记形态、条数、键名和类型。据此判断是否为测量数据；确认后在 `src/measurements.ts` 登记（或列入 `NON_MEASUREMENT_KEYS`），补测试，再同步。
+- `counts_json.excluded`：不在 `PROFILE_ALLOWLIST` 内而被丢弃的记录数。要改成员范围时，先在测试环境算出目标成员的 `profile_ref`（`p_` + SHA-256("profile" + NUL + suid) 前 16 位，与 `src/measurements.ts` 的 `refOf` 一致），只把 profile_ref 写进 vars；扩大范围后需要一次全量同步补齐历史，缩小范围后已入库数据不会自动删除。
+- manifest 每个窗口的 `unknownDatasets`：上游出现未登记的数据集时整份不落库，这里只记形态、条数、键名和类型；空数组或 null 不标 partial，有内容才标。据此判断是否为测量数据；确认后在 `src/measurements.ts` 登记（或列入 `NON_MEASUREMENT_KEYS`），补测试，再同步。
 - `blocked_items` 有记录：说明真实响应里有未分类的自由字符串，整条记录未发布、批次为 partial。逐个判断字段是否是测量值；确认安全后在 `src/sanitize.ts` 的已知字符串字段表登记，补测试，再同步。
 - `JOIN_RULES_VERIFIED`（`src/measurements.ts`）在确认 `imp_data_id/balance_data_id/gravity_data_id` 与各列表 `data_id` 一一对应前保持 `false`，关联状态只报 `unverified`。
 - `coverage` 目前只会是 `unknown` 或 `partial`：分窗/截断/端点包含关系核实前不写 `verified_window`。
@@ -192,5 +194,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | 2026-09-14 | 真实 Access 邮箱验证码登录 → 授权确认 → ChatGPT 插件连接（含删除重建后重新授权） | 成功；拒绝授权、scope 不足重授权、撤销与过期后 401 未测 |
 | 2026-09-14 | cron `*/10` 在 14:50–15:20 各窗口均未投递（过期 `auth_pending` 未被清理、无 scheduled 调用，重注册无效）；改为 DO alarm 调度，15:48–次日 00:59 共 55 次 `scheduler ok`、无错误，间隔 10 分钟（1 次 20 分钟） | alarm 调度通过；cron 仍不投递 |
 | 2026-09-14 | G1 首次真实 CN 全量（alarm 触发）：18 个窗口，发布 weight 171 / impedance 90 / height 2，共 263 个版本，耗时 10.7 秒；`blocked_items` 0；6 小时后重跑 7 秒、新版本 0。批次 partial，原因是每个窗口都有未登记数据集 `report_list`（当时 manifest 只记名字，2026-09-15 起记结构） | 部分通过：待分类 `report_list`；关联规则、分窗覆盖未核实 |
+| 2026-09-15 | 手动入队全量（与 `refresh_data` 同规则）取回本人 09:17 新称重：新增 2 个版本（weight + impedance，均属 Erika）；manifest 显示 `report_list` 在 18 个窗口均为空数组 | 通过 |
+| 2026-09-15 | 只存本人：部署 `PROFILE_ALLOWLIST` 后执行 `scripts/purge-non-owner-profiles.sql`。删除前其他成员记录/版本 108（含 p_unknown 6）、昵称 5，本人 157；删除后其他成员 0、本人 157、profiles 仅 1 行；三个保护触发器存在，试删 raw_records 被触发器拒绝 | 通过；D1 Time Travel 保留期内仍有删除前副本 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |
 | — | G4/G5 “减肥计划”双聊天 | 未验证 |
