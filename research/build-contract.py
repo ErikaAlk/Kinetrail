@@ -59,7 +59,6 @@ for name,fields in [('list_profiles',{'profile_ref':ID,'label':string(80)}),('li
     tool(name,['body:read'],{'limit':range_props['limit'],'cursor':range_props['cursor']},[],arr(obj(fields,fields.keys())))
 trend_inputs={**range_props,'interval':enum('day','week','month')}
 tool('get_trend',['body:read'],{**trend_inputs,'profile_ref':ID,'metrics':arr(enum('weight_kg','body_fat_pct','fat_mass_kg','fat_free_mass_kg'),4,1),'daily_reducer':{'const':'median'}},['start','end'],ref('Trend'))
-tool('refresh_data',['body:sync'],{'mode':enum('incremental','full')},[],obj({'job_id':ID,'state':enum('queued','running','completed'),'coverage':enum('unknown','partial','verified_window')},['job_id','state','coverage']),True,True,False)
 tool('get_open_workout_sessions',['workout:read'],{'limit':range_props['limit'],'cursor':range_props['cursor']},[],arr(ref('Session')))
 tool('get_workout_history',['workout:read'],{**range_props,'session_id':ID,'entry_cursor':string(2048),'exercise_id':ID,'equipment_ref':ID,'status':enum('open','finalized'),'include_superseded':BOOL},['start','end'],arr(ref('Workout')))
 tool('get_training_trend',['workout:read'],{**trend_inputs,'exercise_id':ID,'equipment_ref':ID},['start','end'],ref('Trend'))

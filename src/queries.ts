@@ -1,10 +1,9 @@
 // 体测只读查询：只读已发布快照，按 generation 固定可见版本；分页、字节预算、大记录分块。
 
 import { type CursorState, decodeCursor, encodeCursor, queryHash } from './cursor'
-import { envSecrets, fitdaysConfigured } from './fitdays'
 import type { ToolContext, ToolOutcome } from './mcp'
 import { type Dataset, JOIN_RULES_VERIFIED } from './measurements'
-import { requestRefresh, runSyncJob, SYNC_POLICY } from './sync'
+import { SYNC_POLICY } from './sync'
 import {
   byteLength,
   DEFAULT_TIMEZONE,
@@ -295,7 +294,7 @@ export async function getLatestMeasurementFull(
     .bind(snap.generation, ctx.ownerId, profile)
     .first<VersionRow>()
   const base = { stale: snap.stale, syncedAt: snap.syncedAt }
-  if (!row) return { ...base, data: null, summary: '本地镜像中没有体测记录。需要时先调用 refresh_data。' }
+  if (!row) return { ...base, data: null, summary: '本地镜像中没有体测记录。' }
   const measurement = await toMeasurement(db, ctx.ownerId, snap.generation, row, includeDeleted)
   const summary = toSummary(row, DEFAULT_TIMEZONE)
   return {
@@ -639,17 +638,3 @@ export const listProfiles = (args: { limit?: number; cursor?: string }, ctx: Too
   listProjection(ctx, args, 'list_profiles')
 export const listDevices = (args: { limit?: number; cursor?: string }, ctx: ToolContext) =>
   listProjection(ctx, args, 'list_devices')
-
-export async function refreshData(
-  args: { mode?: 'incremental' | 'full' },
-  ctx: ToolContext,
-): Promise<ToolOutcome> {
-  if (!fitdaysConfigured(envSecrets(ctx.env)))
-    throw new KtError('FITDAYS_LOGIN_FAILED', { category: 'secret_missing' })
-  const job = await requestRefresh(ctx.env.DB, ctx.ownerId, args.mode ?? 'incremental', ctx.deps.now())
-  if (job.state === 'queued') ctx.waitUntil(runSyncJob(ctx.env, job.job_id, ctx.deps))
-  return {
-    data: job,
-    summary: `同步任务 ${job.job_id} 已${job.state === 'queued' ? '排队' : '在进行中'}；数据是否更新请用 get_sync_status 确认。`,
-  }
-}

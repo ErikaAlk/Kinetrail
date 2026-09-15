@@ -11,13 +11,14 @@ describe('契约闭合', () => {
     expect(contractTools).toEqual(contract.tools)
   })
 
-  it('tools/list 实际输出 19 个工具，annotations/securitySchemes 与契约一致且无 $ref', async () => {
+  it('tools/list 实际输出 18 个工具，annotations/securitySchemes 与契约一致且无 $ref', async () => {
     const worker = createWorker(testDeps())
     const { access_token } = await issueToken(worker, ['body:read'])
     const res = await rpc(worker, access_token, 'tools/list')
     expect(res.status).toBe(200)
     const tools = res.body.result.tools as Record<string, unknown>[]
-    expect(tools).toHaveLength(19)
+    expect(tools).toHaveLength(18)
+    expect(tools.map((t) => t.name)).not.toContain('refresh_data')
     for (const expected of contract.tools) {
       const actual = tools.find((t) => t.name === expected.name)
       expect(actual, expected.name).toBeDefined()
@@ -30,9 +31,8 @@ describe('契约闭合', () => {
     }
   })
 
-  it('刷新与训练写工具不是只读；查询工具是只读', () => {
+  it('训练写工具不是只读；查询工具是只读', () => {
     const writes = [
-      'refresh_data',
       'start_workout_session',
       'record_workout_event',
       'finalize_workout_session',
@@ -44,8 +44,7 @@ describe('契约闭合', () => {
       expect(tool.annotations.openWorldHint).toBe(false)
     }
     const scope = (name: string) => contractTools.find((t) => t.name === name)?.securitySchemes[0]?.scopes
-    expect(scope('refresh_data')).toEqual(['body:sync'])
-    for (const name of writes.slice(1)) expect(scope(name)).toEqual(['workout:write'])
+    for (const name of writes) expect(scope(name)).toEqual(['workout:write'])
   })
 
   it('比 schema 更严的 limit 上限写在工具描述里（模型只看得到 schema 与描述）', () => {

@@ -10,7 +10,7 @@
 
 服务端验证：固定 issuer、resource audience、有效期、当前 token.scope、owner。opaque token 用 Provider 验证，不用 JWT decode 冒充验签；上游 OIDC 用标准验证器。所有工具不可指定 owner；profile/session/entry/chunk/cursor 均再次按授权 owner 查询。资源枚举错误统一 NOT_FOUND，避免跨 owner 信息泄漏。
 
-首连仅申请 `body:read`、`workout:read`；刷新需 `body:sync`，训练写需 `workout:write`。AS 支持四个 scopes，基础 resource metadata/challenge 仅列最小只读需要，写入时 step-up。实际 ChatGPT step-up UX 未验证。Annotations 是提示，不是权限控制。[OpenAI Authentication](https://developers.openai.com/plugins/build/auth)、[MCP 授权](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
+首连仅申请 `body:read`、`workout:read`；训练写需 `workout:write`。`body:sync` 原用于 `refresh_data`，该工具已于 2026-09-15 下线（见第 8 节），scope 仍保留在 AS 元数据中以免已授权连接失效。AS 支持四个 scopes，基础 resource metadata/challenge 仅列最小只读需要，写入时 step-up。实际 ChatGPT step-up UX 未验证。Annotations 是提示，不是权限控制。[OpenAI Authentication](https://developers.openai.com/plugins/build/auth)、[MCP 授权](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
 
 ### 工具表
 
@@ -25,7 +25,6 @@ R/D/I/O = readOnlyHint/destructiveHint/idempotentHint/openWorldHint。每个 des
 | get_trend | body:read | T/F/T/F | 按本地日中位数再聚合 |
 | get_sync_status | body:read | T/F/T/F | 同步/覆盖/陈旧状态 |
 | list_profiles / list_devices | body:read | T/F/T/F | 分页最小投影 |
-| refresh_data | body:sync | F/T/F/F | 启动/推进同步，写本地镜像，不写 FitDays |
 | get_open_workout_sessions | workout:read | T/F/T/F | 找到跨聊天可选 open sessions |
 | get_workout_history | workout:read | T/F/T/F | 已完成事实及可选旧版本审计 |
 | get_training_trend | workout:read | T/F/T/F | 器械隔离的训练指标 |
@@ -39,7 +38,7 @@ R/D/I/O = readOnlyHint/destructiveHint/idempotentHint/openWorldHint。每个 des
 
 `destructiveHint:true` 对 refresh/finalize/reopen/amend 是保守设计选择：它们改变当前有效状态，即便保留历史。新增 record/start 属 additive。不能凭“没有 DELETE”就将所有修改标非破坏。`openWorldHint:false` 是因为只访问固定私有账户/库，并不因为云托管而变 true；不接受工具参数指定任意 URL。[OpenAI 工具设计](https://developers.openai.com/plugins/plan/tools)、[ToolAnnotations](https://modelcontextprotocol.io/specification/2025-11-25/schema#toolannotations)
 
-明确移除任务书的 `get_latest_measurement_full.refresh_if_stale`。查询只读 mirror；模型需要新数据时先调用 refresh_data，再查询。普通访问日志不改变业务事实；不为了 read 添加 last_access 写库。
+明确移除任务书的 `get_latest_measurement_full.refresh_if_stale`。查询只读 mirror；体测新数据由手机推送，模型不能触发刷新（2026-09-15 前为先调用 refresh_data 再查询）。普通访问日志不改变业务事实；不为了 read 添加 last_access 写库。
 
 ## 2. 输入、输出和默认值
 
@@ -52,8 +51,8 @@ JSON Schema 的缺失字段为“未提供”，不默认写成 null/0；所有 
 - summary 默认 limit=50，最多 200；full 默认 10，最多 25（即便通用 schema 上限为 200，按 detail 再校验）；raw 默认 25，最多 100。Workout 一页至多 20 sessions/100 entries，子集合未完用条目级游标继续，不隐性裁掉剩余组。
 - MCP 序列化总响应上限 256 KiB，请求上限 64 KiB；范围查询默认允许最大 366 天，较长区间分窗；trend 最多 366 日/104 周/60 月。limit 与字节上限先到者生效。
 - raw/聚合单条超过上限：返回 version/chunk_ref、`complete:false`，不声称已经返回完整记录。get_raw_record_chunk 单块至多 24 KiB 原字节，base64 ≤32768 字符，含完整及分块 SHA-256；不返回签名下载 URL，不把 token 放 URI。
-- `refresh_data.mode` 默认 incremental；返回 job_id 和 queued/running/completed。queued 只表示已接受任务，不是“FitDays 数据已更新”；get_sync_status 查批次结论。开始前检查冷却/lease，拒绝无界重复全量。
-- 同步 stale 判定候选 15 分钟或最近失败；是产品阈值，不是上游有效期。body reads 返回 synced_at；训练事务读应立即读取主库，不缓存陈旧结果。
+- ~~`refresh_data.mode` 默认 incremental~~：工具已下线，见第 8 节。
+- stale：最近一次成功发布超过 36 小时，或最近一次尝试失败（2026-09-15 前为 15 分钟）；是产品阈值，不是上游有效期。body reads 返回 synced_at；训练事务读应立即读取主库，不缓存陈旧结果。
 - record 每次最多 20 entries、每 entry 100 sets，raw_text 最多 4096 字；超出分批用不同键，明确每批结果。未填重量/时长不阻塞已明确完成事实。
 - `load_value` 有值须有 load_unit；distance/speed 同理。必须至少一个实际已完成动作/组/segment 依据，空对象 set 不得作为事实；负次数/NaN/Infinity/未来完成时间冲突拒绝。日期可补录但不能未来冒充过去。
 
@@ -142,7 +141,7 @@ full measurement 关联项数量过多时给关系续页引用；workout entry �
 
 ## 6. “减肥计划”项目 instructions 与 G4/G5
 
-2026-09-15 定稿并写入“减肥计划”项目设置（语义与原草案相同，换成实际工具名，补充单人数据与整场汇总规则）：
+2026-09-15 定稿并写入“减肥计划”项目设置（语义与原草案相同，换成实际工具名，补充单人数据与整场汇总规则）。同日体测改为手机推送后，“体测”一段改为下文版本；ChatGPT 项目设置里的文字需要用户手动同步，部署前后以设置里的实际文字为准：
 
 ```text
 Kinetrail（身迹）是我的体测与训练事实数据库，库里只有我（Erika）一个人的数据，查询时不需要指定成员。
@@ -150,8 +149,8 @@ Kinetrail（身迹）是我的体测与训练事实数据库，库里只有我�
 
 体测
 - 体测只读本地镜像：get_measurements、get_latest_measurement_full、get_trend、get_progress_overview。
-- 只有我明确说“刷新体测”时才调用 refresh_data：每次刷新都会把我手机上的 FitDays 顶下线。数据显示 stale 时告诉我数据停在什么时候，不要自己刷新。
-- refresh_data 返回 queued 只表示已受理，稍后用 get_sync_status 确认，并留意结果里的 stale 和 coverage。
+- 体测数据由我的手机经 Health Connect 推送，你没有刷新工具。数据显示 stale 时，告诉我最后一次同步是什么时候，提醒我在手机上打开“身迹同步”。
+- 2026-09-15 之后的体测只有体重、体脂率、骨量、基础代谢、水分等，没有肌肉率、内脏脂肪、身体年龄；比较新旧数据时只比两边都有的指标。
 
 训练记录
 - 只有我明确说自己已经完成的训练才能写入。计划、建议、假设、引用他人、否定、以及没说完成的内容，一律不写。
@@ -189,7 +188,7 @@ Kinetrail（身迹）是我的体测与训练事实数据库，库里只有我�
 - 同步 `coverage`：真实分窗/截断/端点行为核实前只会是 `unknown`（完整发布）或 `partial`（有阻断或未知数据集），不会写 `verified_window`。
 - `list_profiles` 的 `label` 取 FitDays 成员昵称，没有或形态可疑时为 `未命名成员`。
 - 部署配置了 `PROFILE_ALLOWLIST` 时库里只有白名单成员（当前只有本人），`list_profiles` 只返回这些成员，省略 `profile_ref` 时自动选中唯一成员，不会出现 PROFILE_REQUIRED。
-- `refresh_data`：FitDays 凭据未配置时直接 `FITDAYS_LOGIN_FAILED`，不创建任务。冷却：增量 60 秒、首次全量（没有检查点，含首批失败或 partial 后）10 分钟、校准全量 24 小时。
+- ~~`refresh_data`~~：已下线（第 8 节）。内部 FitDays 同步任务的冷却仍为增量 60 秒、首次全量 10 分钟、校准全量 24 小时。
 
 **趋势**
 
@@ -207,3 +206,10 @@ Kinetrail（身迹）是我的体测与训练事实数据库，库里只有我�
 - 任何写入字段出现邮箱、URL、JWT、MAC 等形态时 `SENSITIVE_PAYLOAD_BLOCKED`（与读工具输出检查同一规则）。
 - `get_write_receipt` 查不到时 `status:"empty"`、`data:null`。
 - `get_workout_history`：`limit` 最大 20（超出 `INVALID_INPUT`）；一页最多 100 条条目且约 200 KiB；会话条目未读完时 `entries_complete:false` 并给 `entry_cursor`，续读须同时传同一个 `session_id`；按 `exercise_id`/`equipment_ref` 筛选时被筛掉的会话也推进 `next_cursor`，一页可能为空但仍有下一页。
+
+## 8. 体测改为 Health Connect 推送（2026-09-15，Opus 5）
+
+- `refresh_data` 从契约与 tools/list 移除，工具数 19 → 18（`research/build-contract.py` 重新生成、`src/schemas.ts` 同步、`tests/contract.test.ts` 断言不再出现）。原因：服务端每次登录 FitDays+ 都会把手机 App 顶下线（`research/FITDAYSPLUS.md`），体测改由手机读取 Health Connect 后推送（`research/HEALTHCONNECT.md`）。
+- 推送入口 `POST /ingest/health-connect` 不是 MCP 工具，不走 OAuth，不出现在 tools/list 或任何 metadata 里；其错误码只用于该端点，不进入第 5 节错误表。规则见 DATA_CONTRACT 第 8 节。
+- 读工具语义不变：只读已发布快照。`get_sync_status` 输出 schema 不变，`last_success_at` 含推送发布，`counts` 另含最近批次的计数；stale 阈值改为 36 小时。
+- 工具描述去掉“需要新数据时先调用 refresh_data”“FitDays 标记删除”等说法。

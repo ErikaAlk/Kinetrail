@@ -3,7 +3,16 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
-const SKIP_DIRS = new Set(['node_modules', '.git', '.wrangler', '.local', 'dist'])
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.wrangler',
+  '.local',
+  'dist',
+  'build',
+  '.gradle',
+  '.kotlin',
+])
 const TEXT = /\.(ts|mjs|js|json|jsonc|md|sql|py|txt|toml|yaml|yml|html)$|^\.(gitignore|npmrc)$/
 const FORBIDDEN_FILES = /^\.(dev\.vars|env)(\..*)?$/
 

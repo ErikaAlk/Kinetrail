@@ -9,3 +9,8 @@ secrets/
 .wrangler/
 *.kbak
 *.sql.tmp
+android/.gradle/
+android/.kotlin/
+android/**/build/
+android/local.properties
+*.apk

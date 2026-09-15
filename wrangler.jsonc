@@ -37,6 +37,10 @@
     // 只同步本人（FitDays 成员 Erika）；其他成员与无 suid 的记录不落库。
     "PROFILE_ALLOWLIST": "p_914ea14c79915f2f",
     // FitDays/FitDays+ 同一账号只保留最后一次登录的 token，定时同步会把手机顶下线；只在用户明确刷新时登录。
-    "PERIODIC_SYNC": "off"
+    "PERIODIC_SYNC": "off",
+    // Health Connect 推送：只接受晚于旧 FitDays 最后一条测量（09:17:00）的称重，避免跨来源重复。
+    "HC_ACCEPT_AFTER": "2026-09-15T09:17:00+08:00",
+    // FitDays+ 只把主用户写进 HC（research/HEALTHCONNECT.md G-HC3）；推送的测量归到现有本人 profile，趋势不断档。
+    "HC_PROFILE_REF": "p_914ea14c79915f2f"
   }
 }
