@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "includes": ["**", "!research", "!worker-configuration.d.ts", "!**/*.md"]
+    "includes": ["**", "!research", "!worker-configuration.d.ts", "!**/*.md", "!.claude/worktrees"]
   },
   "formatter": {
     "indentStyle": "space",

@@ -34,7 +34,8 @@ function visit(dir) {
     const path = join(dir, name)
     const rel = relative(ROOT, path).replaceAll('\\', '/')
     if (statSync(path).isDirectory()) {
-      if (!SKIP_DIRS.has(name)) visit(path)
+      // .claude/worktrees 是 Claude Code 在仓库内建的 git worktree（整份仓库副本），由各自 worktree 自己检查。
+      if (!SKIP_DIRS.has(name) && rel !== '.claude/worktrees') visit(path)
       continue
     }
     if (FORBIDDEN_FILES.test(name)) hits.push(`${rel}: forbidden-file`)
