@@ -108,7 +108,7 @@ V2 再加后台：`getFeatureStatus` 支持后台读时申请该权限，WorkMan
 
 - 体测仍然只有一个写入路径：暂存 → 原子发布，持 `sync_lease`。推送入口只是这条链路的一个新来源。
 - 推送入口只写 `source_record_id` 以 `hc:` 开头、`profile_ref = HC_PROFILE_REF` 的 `weight` 记录；不能改训练事实，不能碰 FitDays 来源的记录，不返回任何已存数据。
-- 主来源切换：`refresh_data` 已下线，服务端不再主动登录 FitDays+。FitDays 拉取代码仍保留（`PERIODIC_SYNC=off`、没有工具入口），上线后应删除 `FITDAYS_*` secrets；两个来源不同时导入同一段时间的数据，避免跨来源去重。
+- 主来源切换：`refresh_data` 已下线，服务端不再主动登录 FitDays+。FitDays 拉取代码仍保留（`PERIODIC_SYNC=off`、没有工具入口），`FITDAYS_*` secrets 按用户决定保留；两个来源不同时导入同一段时间的数据，避免跨来源去重。
 - 调度回收中断的推送批次时只标失败，**不会**像 FitDays 批次那样重排成拉取任务（那会登录 FitDays+ 并顶掉手机）；由设备重发。
 
 ### 3.2 端点与鉴权

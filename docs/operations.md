@@ -229,7 +229,7 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 3. 端点无法删除 HC 里不存在的记录，注入的组需要一次性脚本经暂存/发布写 tombstone 版本（或按 `scripts/purge-non-owner-profiles.sql` 的方式物理删除）。两种都会改变线上事实数据，**执行前必须单独征得用户授权**；目前没有现成脚本。
 4. 清理后打开 App 重新同步；手机 token 一直未推进，真实数据会补齐。若停住超过 30 天，HC 变更记录过期，App 退回首次同步，期间在 HC 里做的删除需要人工核对。
 
-**上线后**：确认推送正常后删除 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（`wrangler secret delete`），防止任何路径再登录 FitDays+。
+**FitDays 凭据**：用户决定保留 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（2026-09-15），以便需要时恢复 FitDays+ 拉取。当前没有任何入口会登录 FitDays+：`refresh_data` 已下线、`PERIODIC_SYNC=off`、推送批次不会被重排成拉取任务；只有手工向 `sync_batches` 插入 queued 任务才会触发登录（会顶掉手机）。不再需要时用 `wrangler secret delete` 删除。
 
 ## 验证记录
 
@@ -251,4 +251,5 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 | 2026-09-15 | 部署 PR #10（main `5a15f52`，版本 `bdbcd4f8`）。冒烟：`/healthz` 200；未设令牌时推送端点 POST/GET 均 404；匿名 `/mcp` 401 带 `resource_metadata`；AS 元数据只列 S256、四个 scope 不变；vars 含 `HC_ACCEPT_AFTER`/`HC_PROFILE_REF`/`HC_HEIGHT_CM=164`；D1 无 queued/staging 批次。tools/list 18 个未在线上核对（需 OAuth） | 通过 |
 | 2026-09-15 | 真机首次推送（用户经 PowerShell 生成令牌并保存）：1 个 `health_connect` 批次 published，新增 2 次测量、拒绝 0；14:22 组 weight 63.1 / body_fat 19 / bone 3.4 / bmr 1473 / body_water_pct 59.4 / bmi 23.5，16:54 组 63.05 / 18.4 / bmi 23.4；均在 `p_914ea14c79915f2f`，profiles 仍 1 行，`last_error_code` 为空 | 通过 |
 | 2026-09-15 | 推送端点本地验证：`npm run check` 96 个测试通过；合并不可变、已删不复活、令牌校验、HC 批次不重排四条规则分别临时撤掉后对应测试失败；dry-run bundle 411 KiB、无 `eval`/`new Function`；手机端 0.2.0 构建通过 | 通过；未部署，真机推送未测 |
+| 2026-09-15 | 第二次真机推送：新增 20:42:50、20:43:44 两次经测量页的称重（均 63.9 kg / 19.3% / BMI 23.8），批次 published、拒绝 0；14:22、16:54 两组未产生新版本（增量只推变更时刻） | 通过 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |
