@@ -214,7 +214,7 @@ Remove-Variable ingestToken, ingestHash
 
 然后在手机上点“保存令牌”，App 会立刻同步一次。`adb shell input text` 运行期间令牌会短暂出现在手机 shell 的进程参数里。
 
-**日常**：称重后打开“身迹同步”即自动推送（V1 没有后台任务）。在 FitDays+ 里删除称重不会同步；要从 Kinetrail 去掉误测，到系统 Health Connect 的数据页删除那次的体重记录，再打开 App 同步。
+**日常**：先在 FitDays+ 里打开对应体脂秤的测量页，再站上秤，看到手机上的测量动画——只有这样称的才会写入 Health Connect；不经测量页的称重（秤端缓存后补传）不会进 Kinetrail，与是否联网无关。称完打开“身迹同步”即自动推送（V1 没有后台任务）。在 FitDays+ 里删除称重不会同步；要从 Kinetrail 去掉误测，到系统 Health Connect 的数据页删除那次的体重记录，再打开 App 同步。
 
 **检查**（只看结构与计数）：
 
@@ -246,6 +246,9 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 | 2026-09-15 | G3 权限不足重授权：旧 token 只有 body:read/workout:read，`record_workout_event` 得 `INSUFFICIENT_SCOPE`；ChatGPT 引导重新授权，consent 授予 3 个 scope 后同一写入成功 | 通过；拒绝授权、撤销、过期 401 仍未测 |
 | 2026-09-15 | G4/G5（部分）：“减肥计划”聊天 A 补记 9/14 的真实训练，`record_workout_event`（6 个动作）+ `finalize_workout_session`，revision 0→1→2，2 张收据与事件的幂等键和 payload hash 一一对应；未说单位的 ROW 负重保留原值、标 `unknown_load_unit`，未擅自换算。新聊天 B 未粘贴 A 内容，经 `get_workout_history` 读回同一会话的全部组、原话备注与汇总。发现：B 的前 3 次调用传了超过 20 的 limit 被 `INVALID_INPUT` 拒绝（上限只在契约里、工具描述没写，已补描述与测试）；手表整场汇总被记成 `other` 动作（不计入统计，项目指令已补规则） | 部分通过；计划类表达不写入、到场建空会话、amend 纠错、结束后追加被拒/reopen、超时同键重试均未测 |
 | 2026-09-15 | 顶号排查：FitDays 主账号连续登录 4 次（含 os_type=0/1），每次新登录让旧 token `10000 token无效`；FitDays+ 测试账号同样如此；FitDays+ 账号登不上任何 FitDays 服务器。静态分析 FitDays+ 1.14.1 还原登录/签名/读取请求，测试账号在 plus-cn 登录与读取成功（`research/FITDAYSPLUS.md`） | 顶号为上游单会话策略，无法绕过；已关闭周期同步 |
-| 2026-09-15 | Health Connect 核实关卡（手机一加 PJZ110，ColorOS 16.0.10 / Android 16）：G-HC1 FitDays+ 为 Play 安装的 Google 渠道包、dex 与分析样本一致、HC 权限已授予；G-HC2 称重后 HC 出现同一时刻 6 条记录；G-HC3 只有主用户写入；G-HC4 称重当下写入、联网不重复、App 内删除不同步（`research/HEALTHCONNECT.md` 第 5 节） | 通过 |
+| 2026-09-15 | Health Connect 核实关卡（手机一加 PJZ110，ColorOS 16.0.10 / Android 16）：G-HC1 FitDays+ 为 Play 安装的 Google 渠道包、dex 与分析样本一致、HC 权限已授予；G-HC2 称重后 HC 出现同一时刻 6 条记录；G-HC3 只有主用户写入；G-HC4 未见重复写入（`research/HEALTHCONNECT.md` 第 5 节） | 通过；晚间更正：只有测量页出现动画的称重才写入 HC，App 内删除的实测无效（见下一行） |
+| 2026-09-15 | G-HC4 更正：HC 访问记录显示 FitDays+ 只在 16:54 写入，17:01 的称重（数值相同）HC 与 D1 均无。用户再测两次确认：必须打开 FitDays+ 测量页、站秤出现动画才写入，有动画必写、无动画不写，与飞行模式无关；与静态分析（写 HC 只在测量页的保存请求里，补传路径不调用 HC）一致。App 内删除的实测无法确认删的是哪条，结论改为仅静态分析支撑 | 写入条件已确认；删除行为待补测 |
+| 2026-09-15 | 部署 PR #10（main `5a15f52`，版本 `bdbcd4f8`）。冒烟：`/healthz` 200；未设令牌时推送端点 POST/GET 均 404；匿名 `/mcp` 401 带 `resource_metadata`；AS 元数据只列 S256、四个 scope 不变；vars 含 `HC_ACCEPT_AFTER`/`HC_PROFILE_REF`/`HC_HEIGHT_CM=164`；D1 无 queued/staging 批次。tools/list 18 个未在线上核对（需 OAuth） | 通过 |
+| 2026-09-15 | 真机首次推送（用户经 PowerShell 生成令牌并保存）：1 个 `health_connect` 批次 published，新增 2 次测量、拒绝 0；14:22 组 weight 63.1 / body_fat 19 / bone 3.4 / bmr 1473 / body_water_pct 59.4 / bmi 23.5，16:54 组 63.05 / 18.4 / bmi 23.4；均在 `p_914ea14c79915f2f`，profiles 仍 1 行，`last_error_code` 为空 | 通过 |
 | 2026-09-15 | 推送端点本地验证：`npm run check` 96 个测试通过；合并不可变、已删不复活、令牌校验、HC 批次不重排四条规则分别临时撤掉后对应测试失败；dry-run bundle 411 KiB、无 `eval`/`new Function`；手机端 0.2.0 构建通过 | 通过；未部署，真机推送未测 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |

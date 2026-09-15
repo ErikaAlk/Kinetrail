@@ -244,7 +244,7 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 
 ## 8. Health Connect 来源（2026-09-15，Opus 5）
 
-来源 `health_connect`：手机上的 FitDays+（`cn.icomon.fitdayspro`，Google 渠道包）在每次保存主用户称重时写入 HC，手机端 App 读取后推送。静态分析、实测与完整规则见 `research/HEALTHCONNECT.md` 第 1、3、5 节；本节是规范摘要，实现为 `src/ingest.ts`。
+来源 `health_connect`：手机上的 FitDays+（`cn.icomon.fitdayspro`，Google 渠道包）只在测量页出现动画的主用户称重时写入 HC（秤端缓存、补传的称重不写，这类称重不会进入 Kinetrail），手机端 App 读取后推送。静态分析、实测与完整规则见 `research/HEALTHCONNECT.md` 第 1、3、5 节；本节是规范摘要，实现为 `src/ingest.ts`。
 
 **范围**：只接收 7 个类型（体重 kg、体脂 %、水分质量 kg、骨量 kg、BMR kcal/day、去脂体重 kg、心率 bpm），来源固定为 FitDays+。FitDays+ 只写主用户，不回填历史，不把 App 内的修改或删除同步到 HC；HC 记录没有设备信息和 clientRecordId。
 
