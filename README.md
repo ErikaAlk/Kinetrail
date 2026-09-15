@@ -13,7 +13,7 @@
 | 生产 bundle 与官方 MCP Inspector 互通 | 已验证（合成数据，见 `research/production-inspector-results.json`） |
 | 加密 + 签名备份 → 验签解密 → 隔离库恢复 → 校验 | 本地演练通过（含篡改拒绝） |
 | 独立审查（Claude 子代理，四轮） | 各轮发现均已修复并有回归测试；第四轮修复后未再送审 |
-| 云端部署 `https://kinetrail.erikaalk.click`（D1 迁移、Access OIDC 应用、cron） | 已部署，匿名冒烟通过；本人身份已绑定，FitDays secrets 已设置 |
+| 云端部署 `https://kinetrail.erikaalk.click`（D1 迁移、Access OIDC 应用、DO alarm 定时调度） | 已部署；本人身份已绑定，ChatGPT 已连接；首次真实同步已发布，批次因未登记数据集 `report_list` 为 partial |
 | G1 真实 FitDays CN、G2 云端容量与恢复、G3 真实 Access/CIMD/ChatGPT、G4/G5 “减肥计划”双聊天 | **未验证** |
 
 未通过 G1–G5 前不是生产可用版本。
@@ -41,7 +41,7 @@ npx --yes --package=node@22.23.2 node production-inspector-check.mjs
 
 ```text
 src/
-  index.ts         Worker 入口：OAuth Provider、授权页路由、cron
+  index.ts         Worker 入口：OAuth Provider、授权页路由、SyncScheduler（DO alarm）与 cron
   auth.ts          Access OIDC 本人绑定、consent、JWT 验签
   mcp.ts           无状态 Streamable HTTP（JSON-RPC）、工具注册、scope、限流、信封、输出检查
   schemas.ts       MCP 契约 schema（与 research/mcp-schemas.json 逐项一致）
@@ -49,7 +49,7 @@ src/
   fitdays.ts       FitDays 只读适配：固定路由、manual redirect、预算、原文捕获
   sanitize.ts      秘密边界：采集阻断/脱敏与输出二次检查
   measurements.ts  测量解析、版本、分块、暂存与原子发布
-  sync.ts          同步任务队列、lease/fencing、冷却、cron 补偿
+  sync.ts          同步任务队列、lease/fencing、冷却、定时补偿
   queries.ts       体测查询、快照游标、分块读取、同步状态
   workouts.ts      训练写入事务与历史查询
   trends.ts        体测趋势 trend_v1、训练趋势 training_v1、同期概览

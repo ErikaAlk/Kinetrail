@@ -88,7 +88,7 @@ export interface PreparedBatch {
   manifests: {
     window: CapturedWindow['window']
     datasets: Record<string, ManifestEntry>
-    unknownDatasets: string[]
+    unknownDatasets: Record<string, ManifestEntry>
   }[]
   records: PreparedRecord[]
   blocked: (BlockedItem & { dataset: string; recordIndex: number | null })[]
@@ -137,6 +137,24 @@ function typeName(value: unknown): string {
   if (isRawNumber(value)) return 'number'
   if (Array.isArray(value)) return 'array'
   return typeof value
+}
+
+// 只记列表元素的键名与类型，不记值；可疑键名（邮箱/URL/JWT 形态或已知秘密）替换为 <redacted-key>。
+function listManifest(list: unknown[], knownSecrets: ReadonlySet<string>): ManifestEntry {
+  // Map 而不是普通对象：记录里出现 constructor / __proto__ 键时不能撞上原型属性。
+  const keys = new Map<string, Set<string>>()
+  for (const item of list) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    for (const [k, v] of Object.entries(item)) {
+      const name = isSuspiciousValue(k, knownSecrets) ? '<redacted-key>' : k
+      keys.set(name, (keys.get(name) ?? new Set()).add(typeName(v)))
+    }
+  }
+  return {
+    presence: 'array',
+    count: list.length,
+    keys: Object.fromEntries([...keys].map(([k, v]) => [k, [...v].sort()])),
+  }
 }
 
 async function prepareRecord(
@@ -280,20 +298,7 @@ export async function prepareWindows(
         batch.partial = true
         continue
       }
-      // Map 而不是普通对象：记录里出现 constructor / __proto__ 键时不能撞上原型属性。
-      const keys = new Map<string, Set<string>>()
-      for (const item of list) {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) continue
-        for (const [k, v] of Object.entries(item)) {
-          const name = isSuspiciousValue(k, knownSecrets) ? '<redacted-key>' : k
-          keys.set(name, (keys.get(name) ?? new Set()).add(typeName(v)))
-        }
-      }
-      manifest[dataset] = {
-        presence: 'array',
-        count: list.length,
-        keys: Object.fromEntries([...keys].map(([k, v]) => [k, [...v].sort()])),
-      }
+      manifest[dataset] = listManifest(list, knownSecrets)
       for (let index = 0; index < list.length; index++) {
         const sanitized = sanitizeRecord(list[index], dataset, knownSecrets)
         if (sanitized.blocked.length > 0) {
@@ -307,10 +312,16 @@ export async function prepareWindows(
         if (suid && !profiles.has(prepared.profileRef)) profiles.set(prepared.profileRef, null)
       }
     }
-    const unknownDatasets = Object.keys(body).filter(
-      (k) => !NON_MEASUREMENT_KEYS.has(k) && !DATASETS.some((d) => `${d}_list` === k),
-    )
-    if (unknownDatasets.length > 0) batch.partial = true
+    // 新数据集 fail-closed：不落库、批次 partial，只记结构供分类（DATA_CONTRACT 第 3 条）。
+    const unknownDatasets: Record<string, ManifestEntry> = {}
+    for (const [k, v] of Object.entries(body)) {
+      if (NON_MEASUREMENT_KEYS.has(k) || DATASETS.some((d) => `${d}_list` === k)) continue
+      const name = isSuspiciousValue(k, knownSecrets) ? '<redacted-key>' : k
+      unknownDatasets[name] = Array.isArray(v)
+        ? listManifest(v, knownSecrets)
+        : { presence: v === null ? 'null' : 'unexpected_type', count: 0, keys: {} }
+      batch.partial = true
+    }
     batch.manifests.push({ window: captured.window, datasets: manifest, unknownDatasets })
 
     if (Array.isArray(body.users)) {

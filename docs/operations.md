@@ -15,12 +15,13 @@
 | Access for SaaS | 应用 `Kinetrail`（`d97f5f5e-172c-4443-b65f-0b0e863449d6`），IdP 邮箱验证码，策略“邮箱白名单”（与 dsh 相同的两个邮箱），PKCE + client secret |
 | 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY`、`FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION` |
 | 本人绑定 | `OWNER_OIDC_SUB` 已写入 vars（邮箱验证码登录得到的 sub；换登录邮箱会得到不同 sub，需重新绑定） |
+| 定时调度 | Durable Object `SyncScheduler`（SQLite 存储，实例名 `scheduler`）的 alarm 每 10 分钟执行一次；本账户 cron 触发器注册成功但从不投递，`*/10` 仍保留 |
 
 ## 1. 组成与数据边界
 
 | 组件 | 内容 | 注意 |
 | --- | --- | --- |
-| Worker `kinetrail` | `/mcp`、OAuth 端点、`/authorize` `/callback` `/consent`、`/healthz`、cron | `observability.logs.invocation_logs=false`，不记录请求 URL |
+| Worker `kinetrail` | `/mcp`、OAuth 端点、`/authorize` `/callback` `/consent`、`/healthz`、定时调度（DO alarm，cron 备用） | `observability.logs.invocation_logs=false`，不记录请求 URL |
 | D1 `kinetrail` | 测量 raw 版本与索引、同步批次、训练事件/版本/收据、一次性授权状态、限流计数 | 事实表有禁止删除/改写触发器 |
 | KV `OAUTH_KV` | 仅 OAuth Provider 的 client/grant/token | 不存 FitDays 凭据、不存训练事实 |
 | Secrets | `FITDAYS_LOGIN` `FITDAYS_PASSWORD` `FITDAYS_REGION` `ACCESS_CLIENT_SECRET` `CURSOR_SIGNING_KEY` | 只用 `wrangler secret put`，不写 `.env`/`.dev.vars`、不放命令参数 |
@@ -93,6 +94,7 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, mode, state, co
 npx wrangler d1 execute kinetrail --remote --command "SELECT dataset, path, value_type, code, COUNT(*) AS n FROM blocked_items GROUP BY 1,2,3,4"
 ```
 
+- manifest 每个窗口的 `unknownDatasets`：上游出现未登记的数据集时整份不落库、批次为 partial，这里只记形态、条数、键名和类型。据此判断是否为测量数据；确认后在 `src/measurements.ts` 登记（或列入 `NON_MEASUREMENT_KEYS`），补测试，再同步。
 - `blocked_items` 有记录：说明真实响应里有未分类的自由字符串，整条记录未发布、批次为 partial。逐个判断字段是否是测量值；确认安全后在 `src/sanitize.ts` 的已知字符串字段表登记，补测试，再同步。
 - `JOIN_RULES_VERIFIED`（`src/measurements.ts`）在确认 `imp_data_id/balance_data_id/gravity_data_id` 与各列表 `data_id` 一一对应前保持 `false`，关联状态只报 `unverified`。
 - `coverage` 目前只会是 `unknown` 或 `partial`：分窗/截断/端点包含关系核实前不写 `verified_window`。
@@ -159,14 +161,14 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | `UPSTREAM_TIMEOUT` | 单请求 15 秒 / 整个任务 120 秒超时，已有限重试 | 稍后重试；持续出现时查看是否需要缩小 `SYNC_POLICY.windowSeconds` |
 | `INCOMPLETE_SYNC` | 响应非 JSON、超过 32 MiB、业务码非 0、任务被截断 | `wrangler tail` 查看 `event:"sync"` 的 `category`（只含非敏感类别，如 `upstream_code_500`） |
 | 批次 `partial` | 有记录被阻断或出现未知数据集 | 按第 3 节查询 `blocked_items`；partial 不推进增量检查点 |
-| 读工具 `stale:true` | 15 分钟未成功同步或最近一次同步失败 | 调 `refresh_data`；cron 每 10 分钟处理队列、每 6 小时增量、每 7 天全量 |
+| 读工具 `stale:true` | 15 分钟未成功同步或最近一次同步失败 | 调 `refresh_data`；定时调度每 10 分钟处理队列、每 6 小时增量、每 7 天全量（没有检查点时每 6 小时仍是全量） |
 | `SYNC_IN_PROGRESS` | 已有任务或处于冷却（增量 60 秒、全量 24 小时） | 按 `retry_after_seconds` 等待 |
 | `RATE_LIMITED` / HTTP 429 | `/mcp` 每 owner 120 次 HTTP 请求/分（含 tools/list 等）；工具读 60/分、写 20/分；`/authorize` 10/分/IP、token 20/分 | 等待；异常增长时检查是否有脚本循环调用 |
 | `REVISION_CONFLICT` | 会话已被其他写入推进 | 先 `get_open_workout_sessions` 读回 revision，确认内容后用**新**幂等键重写 |
 | `COMMIT_STATUS_UNKNOWN` | 提交结果无法确认 | 用同一个 `idempotency_key` 调 `get_write_receipt`，或原样重试；不要换键 |
 | `NEEDS_CLARIFICATION` | 原话含计划/建议/假设/否定/他人等表达 | 先向用户确认已完成，再用确认后的原话记录 |
 | `SENSITIVE_PAYLOAD_BLOCKED` | 输入或输出里出现邮箱、URL、JWT 等形态 | 训练原话里去掉链接/联系方式；读工具出现说明入库前的阻断有漏洞，需要排查 |
-| cron 不运行 | Dashboard → Worker → Triggers 查看 | `wrangler.jsonc` 的 `triggers.crons` 需随部署生效 |
+| 定时同步不运行 | 调度由 `SyncScheduler` alarm 负责；Workers Observability 里应每 10 分钟有一条 `origin=alarm`、`{"event":"scheduler","status":"ok"}` | 没有时先访问一次 `/healthz`（每个 isolate 会补上缺失的 alarm，日志 `status:"ensured"`）；`status:"error"` 看 `code`。本账户 cron 注册后从不投递（无 `origin=scheduled` 调用，已重注册无效，社区有同类未解决报告），不要依赖它 |
 
 日志只包含 `event/request_id/tool/duration_ms/count/status/code/category`。不要为排查临时打印请求体、上游响应或错误对象。
 
@@ -185,9 +187,10 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | 日期 | 范围 | 结论 |
 | --- | --- | --- |
 | 2026-09-14 | 本地 workerd/Miniflare、合成数据：测量链、训练事务、趋势、合成 OIDC、Inspector 互通、加密备份恢复演练 | 通过 |
-| 2026-09-14 | 真实 Access 登录 → 授权确认页 → 点“授权”报“来源校验失败”：页面 `Referrer-Policy: no-referrer` 使浏览器对表单 POST 发 `Origin: null`（线上表单对照实验复现）；确认页改为 `same-origin` 并补回归断言 | 已修复部署，待真实授权复测 |
+| 2026-09-14 | 真实 Access 登录 → 授权确认页 → 点“授权”报“来源校验失败”：页面 `Referrer-Policy: no-referrer` 使浏览器对表单 POST 发 `Origin: null`（线上表单对照实验复现）；确认页改为 `same-origin` 并补回归断言 | 已修复部署，真实授权复测通过 |
 | 2026-09-14 | 云端首次部署冒烟：`/healthz` 200；匿名 `POST /mcp` 401 且带 `resource_metadata`；AS 元数据只列 `S256`；Access OIDC 发现文档端点与 vars 一致；workers.dev 入口 404；cron `*/10` 已注册 | 通过（未经过真实登录） |
-| — | G1 真实 CN | 未验证 |
+| 2026-09-14 | 真实 Access 邮箱验证码登录 → 授权确认 → ChatGPT 插件连接（含删除重建后重新授权） | 成功；拒绝授权、scope 不足重授权、撤销与过期后 401 未测 |
+| 2026-09-14 | cron `*/10` 在 14:50–15:20 各窗口均未投递（过期 `auth_pending` 未被清理、无 scheduled 调用，重注册无效）；改为 DO alarm 调度，15:48–次日 00:59 共 55 次 `scheduler ok`、无错误，间隔 10 分钟（1 次 20 分钟） | alarm 调度通过；cron 仍不投递 |
+| 2026-09-14 | G1 首次真实 CN 全量（alarm 触发）：18 个窗口，发布 weight 171 / impedance 90 / height 2，共 263 个版本，耗时 10.7 秒；`blocked_items` 0；6 小时后重跑 7 秒、新版本 0。批次 partial，原因是每个窗口都有未登记数据集 `report_list`（当时 manifest 只记名字，2026-09-15 起记结构） | 部分通过：待分类 `report_list`；关联规则、分窗覆盖未核实 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |
-| — | G3 真实 Access/CIMD/ChatGPT 回调 | 未验证 |
 | — | G4/G5 “减肥计划”双聊天 | 未验证 |

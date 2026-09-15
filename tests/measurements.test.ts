@@ -102,6 +102,34 @@ describe('测量链：保真与 null 语义', () => {
     expect(manifest.weight.keys.unknown_measurement).toEqual(['object'])
   })
 
+  it('未知数据集：批次 partial，manifest 只记形态、条数、键名与类型（可疑键名脱敏），不记值', async () => {
+    const id = owner()
+    const c = clock()
+    const jobId = await sync(
+      id,
+      {
+        ...baseData(),
+        report_list: [{ id: 7, title: 'report-title-value', detail: { x: 1 }, 'someone@example.com': 'v' }],
+        extra_blob: 'opaque-blob-value',
+      },
+      c,
+    )
+    const batch = await env.DB.prepare('SELECT manifest_json, state FROM sync_batches WHERE id = ?')
+      .bind(jobId)
+      .first<Loose>()
+    expect(batch.state).toBe('partial')
+    const unknown = JSON.parse(batch.manifest_json)[0].unknownDatasets
+    expect(unknown.report_list).toEqual({
+      presence: 'array',
+      count: 1,
+      keys: { '<redacted-key>': ['string'], detail: ['object'], id: ['number'], title: ['string'] },
+    })
+    expect(unknown.extra_blob).toEqual({ presence: 'unexpected_type', count: 0, keys: {} })
+    expect(batch.manifest_json).not.toContain('report-title-value')
+    expect(batch.manifest_json).not.toContain('opaque-blob-value')
+    expect(batch.manifest_json).not.toContain('someone@example.com')
+  })
+
   it('超出安全整数的已知指标：索引为 null 并标记，raw 保留原词法', async () => {
     const id = owner()
     const c = clock()
