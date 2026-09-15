@@ -252,4 +252,5 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 | 2026-09-15 | 真机首次推送（用户经 PowerShell 生成令牌并保存）：1 个 `health_connect` 批次 published，新增 2 次测量、拒绝 0；14:22 组 weight 63.1 / body_fat 19 / bone 3.4 / bmr 1473 / body_water_pct 59.4 / bmi 23.5，16:54 组 63.05 / 18.4 / bmi 23.4；均在 `p_914ea14c79915f2f`，profiles 仍 1 行，`last_error_code` 为空 | 通过 |
 | 2026-09-15 | 推送端点本地验证：`npm run check` 96 个测试通过；合并不可变、已删不复活、令牌校验、HC 批次不重排四条规则分别临时撤掉后对应测试失败；dry-run bundle 411 KiB、无 `eval`/`new Function`；手机端 0.2.0 构建通过 | 通过；未部署，真机推送未测 |
 | 2026-09-15 | 第二次真机推送：新增 20:42:50、20:43:44 两次经测量页的称重（均 63.9 kg / 19.3% / BMI 23.8），批次 published、拒绝 0；14:22、16:54 两组未产生新版本（增量只推变更时刻） | 通过 |
+| 2026-09-15 | HC 删除线上实测：用户在系统 Health Connect 删除当天全部 4 组测试称重（非真实数据）后同步，批次 published、`deletions_matched` 24、`deletions_unmatched` 0；4 组各生成 `is_deleted=1` 的新版本（有效记录 0、已删记录 6），旧版本保留。当天 09:17 由旧 FitDays 拉取的称重经用户确认为真实数据，保持不变 | 通过 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |
