@@ -150,7 +150,8 @@ Kinetrail（身迹）是我的体测与训练事实数据库，库里只有我�
 
 体测
 - 体测只读本地镜像：get_measurements、get_latest_measurement_full、get_trend、get_progress_overview。
-- 需要新数据时明确调用 refresh_data；它返回 queued 只表示已受理，稍后用 get_sync_status 确认，并留意结果里的 stale 和 coverage。
+- 只有我明确说“刷新体测”时才调用 refresh_data：每次刷新都会把我手机上的 FitDays 顶下线。数据显示 stale 时告诉我数据停在什么时候，不要自己刷新。
+- refresh_data 返回 queued 只表示已受理，稍后用 get_sync_status 确认，并留意结果里的 stale 和 coverage。
 
 训练记录
 - 只有我明确说自己已经完成的训练才能写入。计划、建议、假设、引用他人、否定、以及没说完成的内容，一律不写。

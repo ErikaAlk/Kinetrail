@@ -35,6 +35,8 @@
     "ACCESS_CLIENT_ID": "ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610",
     "OWNER_OIDC_SUB": "777b3d5e-dc53-50ea-81b5-329d561ca0cc",
     // 只同步本人（FitDays 成员 Erika）；其他成员与无 suid 的记录不落库。
-    "PROFILE_ALLOWLIST": "p_914ea14c79915f2f"
+    "PROFILE_ALLOWLIST": "p_914ea14c79915f2f",
+    // FitDays/FitDays+ 同一账号只保留最后一次登录的 token，定时同步会把手机顶下线；只在用户明确刷新时登录。
+    "PERIODIC_SYNC": "off"
   }
 }

@@ -17,6 +17,8 @@
 | 本人绑定 | `OWNER_OIDC_SUB` 已写入 vars（邮箱验证码登录得到的 sub；换登录邮箱会得到不同 sub，需重新绑定） |
 | 成员范围 | `PROFILE_ALLOWLIST` = `p_914ea14c79915f2f`（FitDays 成员 Erika）；同一账户下其他 5 个成员与无 suid 的记录不落库，历史数据已于 2026-09-15 物理删除 |
 | 定时调度 | Durable Object `SyncScheduler`（SQLite 存储，实例名 `scheduler`）的 alarm 每 10 分钟执行一次；本账户 cron 触发器注册成功但从不投递，`*/10` 仍保留 |
+| 同步方式 | `PERIODIC_SYNC=off`：只在 `refresh_data` 排队后由调度执行，不再每 6 小时自动登录。FitDays/FitDays+ 同一账号只保留最后一次登录，每次同步都会把手机 App 顶下线（`research/FITDAYSPLUS.md`） |
+| 迁移前书签 | D1 Time Travel `00000070-00000000-000050e7-47b4260ff4c6485eb503dca7bbd6e030`（2026-09-15T04:09Z，FitDays→FitDays+ 迁移前） |
 
 ## 1. 组成与数据边界
 
@@ -163,7 +165,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | `UPSTREAM_TIMEOUT` | 单请求 15 秒 / 整个任务 120 秒超时，已有限重试 | 稍后重试；持续出现时查看是否需要缩小 `SYNC_POLICY.windowSeconds` |
 | `INCOMPLETE_SYNC` | 响应非 JSON、超过 32 MiB、业务码非 0、任务被截断 | `wrangler tail` 查看 `event:"sync"` 的 `category`（只含非敏感类别，如 `upstream_code_500`） |
 | 批次 `partial` | 有记录被阻断或出现未知数据集 | 按第 3 节查询 `blocked_items`；partial 不推进增量检查点 |
-| 读工具 `stale:true` | 15 分钟未成功同步或最近一次同步失败 | 调 `refresh_data`；定时调度每 10 分钟处理队列、每 6 小时增量、每 7 天全量（没有检查点时每 6 小时仍是全量） |
+| 读工具 `stale:true` | 15 分钟未成功同步或最近一次同步失败 | 周期同步已关闭，stale 是常态；用户确认要刷新时才调 `refresh_data`（会顶掉手机 App 的登录）。`PERIODIC_SYNC` 改为非 `off` 时恢复每 6 小时增量、每 7 天全量 |
 | `SYNC_IN_PROGRESS` | 已有任务或处于冷却（增量 60 秒、全量 24 小时） | 按 `retry_after_seconds` 等待 |
 | `RATE_LIMITED` / HTTP 429 | `/mcp` 每 owner 120 次 HTTP 请求/分（含 tools/list 等）；工具读 60/分、写 20/分；`/authorize` 10/分/IP、token 20/分 | 等待；异常增长时检查是否有脚本循环调用 |
 | `REVISION_CONFLICT` | 会话已被其他写入推进 | 先 `get_open_workout_sessions` 读回 revision，确认内容后用**新**幂等键重写 |
@@ -198,4 +200,5 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | 2026-09-15 | 只存本人：部署 `PROFILE_ALLOWLIST` 后执行 `scripts/purge-non-owner-profiles.sql`。删除前其他成员记录/版本 108（含 p_unknown 6）、昵称 5，本人 157；删除后其他成员 0、本人 157、profiles 仅 1 行；三个保护触发器存在，试删 raw_records 被触发器拒绝 | 通过；D1 Time Travel 保留期内仍有删除前副本 |
 | 2026-09-15 | G3 权限不足重授权：旧 token 只有 body:read/workout:read，`record_workout_event` 得 `INSUFFICIENT_SCOPE`；ChatGPT 引导重新授权，consent 授予 3 个 scope 后同一写入成功 | 通过；拒绝授权、撤销、过期 401 仍未测 |
 | 2026-09-15 | G4/G5（部分）：“减肥计划”聊天 A 补记 9/14 的真实训练，`record_workout_event`（6 个动作）+ `finalize_workout_session`，revision 0→1→2，2 张收据与事件的幂等键和 payload hash 一一对应；未说单位的 ROW 负重保留原值、标 `unknown_load_unit`，未擅自换算。新聊天 B 未粘贴 A 内容，经 `get_workout_history` 读回同一会话的全部组、原话备注与汇总。发现：B 的前 3 次调用传了超过 20 的 limit 被 `INVALID_INPUT` 拒绝（上限只在契约里、工具描述没写，已补描述与测试）；手表整场汇总被记成 `other` 动作（不计入统计，项目指令已补规则） | 部分通过；计划类表达不写入、到场建空会话、amend 纠错、结束后追加被拒/reopen、超时同键重试均未测 |
+| 2026-09-15 | 顶号排查：FitDays 主账号连续登录 4 次（含 os_type=0/1），每次新登录让旧 token `10000 token无效`；FitDays+ 测试账号同样如此；FitDays+ 账号登不上任何 FitDays 服务器。静态分析 FitDays+ 1.14.1 还原登录/签名/读取请求，测试账号在 plus-cn 登录与读取成功（`research/FITDAYSPLUS.md`） | 顶号为上游单会话策略，无法绕过；已关闭周期同步 |
 | — | G2 云端容量/D1 事务/云端恢复 | 未验证 |

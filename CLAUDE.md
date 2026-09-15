@@ -26,6 +26,7 @@
 - D1 限制 compound SELECT 项数，`UNION ALL` 多了会报 “too many terms”，用标量子查询。
 - `wrangler d1 execute --persist-to` 指向含 8.3 短名（`~1`）的路径会报 internal error，用仓库内相对路径。
 - 账户没有 workers.dev 子域时 cron 注册失败（10063），Worker 与自定义域名却已上线，容易误以为部署成功；本账户子域为 `erikaalk`。
+- FitDays 与 FitDays+ 同一账号只保留最后一次登录的 token，Kinetrail 每次同步都会把用户手机 App 顶下线。`PERIODIC_SYNC` 保持 `off`，不要为了“数据新鲜”打开，也不要自己排队同步；换 client_id 或 os_type 都绕不过（`research/FITDAYSPLUS.md`）。
 - 本账户 cron 触发器注册成功但从不投递，定时同步靠 `SyncScheduler` 的 DO alarm。判断调度是否在跑看 Observability 的 `origin=alarm` 与 `event:"scheduler"`；Cloudflare 的 scheduled 分析和“过往 Cron 事件”对它不适用。
 - MCP Inspector 在 Windows 的 Node 24 下退出时会崩溃，互通检查固定用 Node 22.23.2。
 - Write 工具会把字符串里的 `\u0000` 写成真实 NUL 字节，源码里需要分隔符时用可见字符或确认文件内容。
