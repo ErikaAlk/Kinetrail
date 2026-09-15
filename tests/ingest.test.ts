@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createWorker } from '../src/index'
 import {
+  attachReport,
   type HcRecord,
   heightCm,
   INGEST_PATH,
@@ -12,6 +13,7 @@ import {
 import { getMeasurements, getSyncStatus } from '../src/queries'
 import { acquireLease, scheduledSync } from '../src/sync'
 import { clock, deps, toolContext } from './fitdays-mock'
+import androidReport from './fixtures/android-report.json'
 import { dispatch, type Loose, ORIGIN } from './helpers'
 
 const PROFILE = 'p_hc_test_owner'
@@ -282,6 +284,244 @@ describe('Health Connect 推送：合并与发布', () => {
   })
 })
 
+// 2026-09-15 20:43 那份 FitDays+ 报告的读数（与线上 20:43:44 那组 HC 记录同一次称重），时间平移到 T1 所在分钟。
+const MINUTE = Math.floor(T1 / 60_000) * 60_000
+const seg = (kg: number, pct: number) => ({ kg, pct })
+const REPORT = {
+  measured_minute_ms: MINUTE,
+  height_cm: 164,
+  age: 19,
+  body_score: 77,
+  weight_kg: { value: 63.9, min: 50.3, max: 68 },
+  body_fat_kg: { value: 12.3, min: 7.1, max: 14.2 },
+  bone_mass_kg: { value: 3.5, min: 2.9, max: 3.6 },
+  protein_kg: { value: 10.4, min: 8.6, max: 10.8 },
+  body_water_kg: { value: 37.8, min: 31.6, max: 39.4 },
+  muscle_kg: { value: 48.2, min: 40.3, max: 50.2 },
+  skeletal_muscle_kg: { value: 28.9, min: 25.1, max: 30.7 },
+  body_fat_pct: 19.3,
+  bone_mass_pct: 5.5,
+  protein_pct: 16.2,
+  body_water_pct: 59.2,
+  muscle_pct: 75.4,
+  skeletal_muscle_pct: 45.3,
+  bmi: 23.8,
+  obesity_degree_pct: 107,
+  target_weight_kg: 60.5,
+  weight_control_kg: -3.4,
+  fat_control_kg: -3.4,
+  muscle_control_kg: 0,
+  visceral_fat_level: 4,
+  bmr_kcal: 1484,
+  fat_free_mass_kg: 51.7,
+  subcutaneous_fat_pct: 13.8,
+  smi: 8.3,
+  body_age: 18,
+  whr: 0.8,
+  segment_fat: {
+    left_arm: seg(0.6, 103.8),
+    right_arm: seg(0.5, 95.6),
+    trunk: seg(6.1, 162.6),
+    left_leg: seg(2, 134.6),
+    right_leg: seg(2, 134.7),
+  },
+  segment_muscle: {
+    left_arm: seg(2.8, 101.7),
+    right_arm: seg(2.9, 104.3),
+    trunk: seg(22.4, 100.2),
+    left_leg: seg(8.3, 106.5),
+    right_leg: seg(8.3, 106.5),
+  },
+  impedance_ohm: {
+    khz_20: { right_arm: 316.3, left_arm: 338, trunk: 21.2, right_leg: 254.8, left_leg: 275.6 },
+    khz_100: { right_arm: 271.7, left_arm: 294.7, trunk: 18.7, right_leg: 217.8, left_leg: 236.9 },
+  },
+}
+const MATCHING = [
+  rec(21, 'weight', 63.900001525878906),
+  rec(22, 'body_fat', 19.3),
+  rec(23, 'body_water_mass', 37.828801390838635),
+  rec(24, 'bone_mass', 3.5),
+  rec(25, 'basal_metabolic_rate', 1484),
+  rec(26, 'lean_body_mass', 51.699999999999996),
+]
+const withReports = (body: IngestPayload, reports: unknown[]) => ({ ...body, reports }) as IngestPayload
+
+describe('识图报告：挂到同一次称重', () => {
+  const rawOf = async (owner: string, time: number) =>
+    JSON.parse(
+      (
+        await env.DB.prepare(
+          `SELECT v.raw_json FROM raw_record_versions v JOIN raw_records r ON r.id = v.raw_record_id
+           WHERE r.owner_id = ? AND r.source_record_id = ? ORDER BY v.generation DESC, v.stage_index DESC LIMIT 1`,
+        )
+          .bind(owner, `hc:cn.icomon.fitdayspro:${time}`)
+          .first<{ raw_json: string }>()
+      )?.raw_json ?? 'null',
+    )
+
+  it('只挂到分钟内体重相同的那组：补齐 HC 没有的指标，HC 已有的不覆盖；原样重发不变，改值拒绝', async () => {
+    const owner = crypto.randomUUID()
+    // 线上同样的情形：上一分钟 50 秒还有一次数值相同的称重，报告时间截断到分钟，只对应后一组。
+    const earlier = MINUTE - 10_000
+    const earlierRecords = MATCHING.map((r, i) => ({ ...r, hc_id: uuid(100 + i) }))
+    await ingest(owner, payload([group(earlier, earlierRecords), group(T1, MATCHING)]))
+    const result = await ingest(owner, withReports(payload([]), [REPORT]))
+    expect(result).toMatchObject({ accepted: 1, unchanged: 0, rejected: [] })
+
+    const [before, m] = await summaries(owner)
+    expect(before.quality_flags).not.toContain('report_attached')
+    expect(m.quality_flags).toContain('report_attached')
+    expect(m.metrics).toMatchObject({
+      weight_kg: 63.9,
+      body_fat_pct: 19.3,
+      // HC 水分质量推算的 59.2 与 bmi 推算值保留，报告不覆盖。
+      body_water_pct: 59.2,
+      bmi: 23.8,
+      muscle_pct: 75.4,
+      skeletal_muscle_pct: 45.3,
+      protein_pct: 16.2,
+      subcutaneous_fat_pct: 13.8,
+      visceral_fat_index: 4,
+      body_age: 18,
+      smi: 8.3,
+      whr: 0.8,
+    })
+    const raw = await rawOf(owner, T1)
+    expect(raw.report.impedance_ohm.khz_20.left_arm).toBe(338)
+    expect(Object.keys(raw)).toEqual([
+      'source',
+      'origin',
+      'time_ms',
+      'zone_offset_seconds',
+      'records',
+      'deleted_records',
+      'report',
+    ])
+
+    // 键顺序不同也是同一份报告。
+    const reordered = Object.fromEntries(Object.entries(REPORT).reverse())
+    expect(await ingest(owner, withReports(payload([]), [reordered]))).toMatchObject({
+      accepted: 0,
+      unchanged: 1,
+      rejected: [],
+    })
+    expect(await ingest(owner, withReports(payload([]), [{ ...REPORT, body_age: 30 }]))).toMatchObject({
+      accepted: 0,
+      rejected: [{ time_ms: MINUTE, code: 'REPORT_CONFLICT' }],
+    })
+    expect((await summaries(owner))[1].metrics.body_age).toBe(18)
+    expect(await versionCount(owner)).toBe(3)
+  })
+
+  it('找不到、多个候选、体脂对不上、同分钟两份报告都拒绝，不写入', async () => {
+    const owner = crypto.randomUUID()
+    await ingest(owner, payload([group(T1, MATCHING)]))
+    const reject = async (reports: unknown[]) => {
+      const result = await ingest(owner, withReports(payload([]), reports))
+      if (typeof result === 'string') throw new Error(result)
+      expect(result.accepted).toBe(0)
+      return result.rejected.map((r) => r.code)
+    }
+    expect(await reject([{ ...REPORT, measured_minute_ms: MINUTE + 60_000 }])).toEqual(['REPORT_NO_MATCH'])
+    // 查库按分钟窗口取候选，窗口两端在匹配函数里同样要成立；容差边界：体重 0.01、体脂 0.05。
+    const stored = (time: number) => ({
+      ...group(time, MATCHING),
+      source: 'health_connect' as const,
+      deleted_records: [],
+    })
+    expect(attachReport([stored(T1)], { ...REPORT, measured_minute_ms: MINUTE - 60_000 })).toBe(
+      'REPORT_NO_MATCH',
+    )
+    expect(attachReport([stored(MINUTE - 10_000)], REPORT)).toBe('REPORT_NO_MATCH')
+    expect(attachReport([stored(T1)], { ...REPORT, weight_kg: { value: 63.91 } })).not.toBeTypeOf('string')
+    expect(attachReport([stored(T1)], { ...REPORT, weight_kg: { value: 63.92 } })).toBe('REPORT_NO_MATCH')
+    expect(attachReport([stored(T1)], { ...REPORT, body_fat_pct: 19.35 })).not.toBeTypeOf('string')
+    expect(attachReport([stored(T1)], { ...REPORT, body_fat_pct: 19.36 })).toBe('REPORT_MISMATCH')
+    expect(await reject([{ ...REPORT, weight_kg: { value: 63.8 } }])).toEqual(['REPORT_NO_MATCH'])
+    expect(await reject([{ ...REPORT, body_fat_pct: 19.5 }])).toEqual(['REPORT_MISMATCH'])
+    expect(await versionCount(owner)).toBe(1)
+    // 同一分钟两份：后一份拒绝，前一份照常处理。
+    expect(
+      await ingest(owner, withReports(payload([]), [REPORT, { ...REPORT, body_age: 30 }])),
+    ).toMatchObject({ accepted: 1, rejected: [{ code: 'REPORT_DUPLICATE' }] })
+
+    const twice = crypto.randomUUID()
+    const again = MATCHING.map((r, i) => ({ ...r, hc_id: uuid(200 + i) }))
+    await ingest(twice, payload([group(T1, MATCHING), group(T1 + 5000, again)]))
+    const ambiguous = await ingest(twice, withReports(payload([]), [REPORT]))
+    expect(ambiguous).toMatchObject({ accepted: 0, rejected: [{ code: 'REPORT_AMBIGUOUS' }] })
+  })
+
+  it('同一请求里新到的称重可以挂；已作废的称重不能挂；之后补类型或删附属记录都保留报告', async () => {
+    const owner = crypto.randomUUID()
+    const weightOnly = [MATCHING[0] as HcRecord]
+    const report = { ...REPORT, body_water_pct: 58 }
+    expect(await ingest(owner, withReports(payload([group(T1, weightOnly)]), [report]))).toMatchObject({
+      accepted: 1,
+      rejected: [],
+    })
+    expect((await summaries(owner))[0].metrics.body_water_pct).toBe(58)
+    await ingest(owner, payload([group(T1, MATCHING)]))
+    expect((await rawOf(owner, T1)).report.body_score).toBe(77)
+    // HC 水分质量到了以后以 HC 推算值为准。
+    expect((await summaries(owner))[0].metrics.body_water_pct).toBe(59.2)
+    await ingest(owner, payload([], [uuid(22)]))
+    const [m] = await summaries(owner)
+    // 在 HC 里删掉的体脂不让报告带回来。
+    expect(m.metrics.body_fat_pct).toBeUndefined()
+    expect(m.metrics.muscle_pct).toBe(75.4)
+    expect((await rawOf(owner, T1)).report.body_score).toBe(77)
+
+    const gone = crypto.randomUUID()
+    await ingest(gone, payload([group(T1, MATCHING)], [uuid(21)]))
+    expect(await ingest(gone, withReports(payload([]), [REPORT]))).toMatchObject({
+      rejected: [{ code: 'REPORT_NO_MATCH' }],
+    })
+  })
+})
+
+describe('识图报告：不能借报告改写 HC 的值', () => {
+  it('先删 HC 体脂再挂报告：不同体脂拒绝，相同的也不把删掉的指标带回来', async () => {
+    const owner = crypto.randomUUID()
+    await ingest(owner, payload([group(T1, MATCHING)], [uuid(22), uuid(24)]))
+    expect(await ingest(owner, withReports(payload([]), [{ ...REPORT, body_fat_pct: 5 }]))).toMatchObject({
+      accepted: 0,
+      rejected: [{ code: 'REPORT_MISMATCH' }],
+    })
+    expect(await ingest(owner, withReports(payload([]), [REPORT]))).toMatchObject({
+      accepted: 1,
+      rejected: [],
+    })
+    const [m] = await summaries(owner)
+    expect(m.metrics.body_fat_pct).toBeUndefined()
+    expect(m.metrics.bone_mass_kg).toBeUndefined()
+    expect(m.metrics.skeletal_muscle_pct).toBe(45.3)
+  })
+
+  it('HC 水分质量越界时不用报告的水分率顶上', async () => {
+    const owner = crypto.randomUUID()
+    const records = [MATCHING[0] as HcRecord, rec(40, 'body_water_mass', 500)]
+    await ingest(owner, withReports(payload([group(T1, records)]), [REPORT]))
+    const [m] = await summaries(owner)
+    expect(m.quality_flags).toEqual(
+      expect.arrayContaining(['body_water_mass_out_of_range', 'report_attached']),
+    )
+    expect(m.metrics.body_water_pct).toBeUndefined()
+  })
+
+  it('报告先到、HC 体脂后到且不一致时，原样重发报告仍是未变', async () => {
+    const owner = crypto.randomUUID()
+    await ingest(owner, withReports(payload([group(T1, [MATCHING[0] as HcRecord])]), [REPORT]))
+    await ingest(owner, payload([group(T1, [MATCHING[0] as HcRecord, rec(41, 'body_fat', 20)])]))
+    expect(await ingest(owner, withReports(payload([]), [REPORT]))).toMatchObject({
+      accepted: 0,
+      unchanged: 1,
+      rejected: [],
+    })
+  })
+})
+
 describe('Health Connect 推送：HTTP 边界', () => {
   afterEach(() => vi.restoreAllMocks())
   const worker = createWorker(deps(noFetch, c.now))
@@ -300,6 +540,24 @@ describe('Health Connect 推送：HTTP 边界', () => {
         body,
       }),
     )
+
+  it('手机端生成的报告 JSON（与 Android 单测共用的夹具）经 HTTP 挂到同一请求里的称重上', async () => {
+    const response = await post(
+      JSON.stringify(
+        withReports(
+          payload([
+            group(
+              T1 + 7000,
+              MATCHING.map((r, i) => ({ ...r, hc_id: uuid(300 + i) })),
+            ),
+          ]),
+          [{ ...androidReport, measured_minute_ms: MINUTE }],
+        ),
+      ),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ accepted: 1, rejected: [] })
+  })
 
   it('鉴权通过后写入，响应只含计数', async () => {
     const response = await post(JSON.stringify(payload([group(T1, REAL)])))
@@ -330,6 +588,12 @@ describe('Health Connect 推送：HTTP 边界', () => {
       payload([group(T1, [{ ...(REAL[0] as HcRecord), hc_id: 'not-a-uuid' }])]),
       payload([group(T1, [{ ...(REAL[0] as HcRecord), type: 'steps' as HcRecord['type'] }])]),
       { schema_version: '1', groups: [] },
+      // 报告只收数字；时间必须整分钟；分段五个部位齐全。
+      withReports(payload([]), [{ ...REPORT, note: '手写' }]),
+      withReports(payload([]), [{ ...REPORT, body_age: '18' }]),
+      withReports(payload([]), [{ ...REPORT, measured_minute_ms: MINUTE + 1000 }]),
+      withReports(payload([]), [{ ...REPORT, segment_fat: { trunk: seg(6.1, 162.6) } }]),
+      withReports(payload([]), [{ measured_minute_ms: MINUTE }]),
     ]
     for (const bad of invalid) {
       const response = await post(JSON.stringify(bad))

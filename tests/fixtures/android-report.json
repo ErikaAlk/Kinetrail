@@ -1,0 +1,50 @@
+{
+  "measured_minute_ms": 1789476180000,
+  "height_cm": 164,
+  "age": 19,
+  "body_score": 77,
+  "weight_kg": { "value": 63.9, "min": 50.3, "max": 68 },
+  "body_fat_kg": { "value": 12.3, "min": 7.1, "max": 14.2 },
+  "bone_mass_kg": { "value": 3.5, "min": 2.9, "max": 3.6 },
+  "protein_kg": { "value": 10.4, "min": 8.6, "max": 10.8 },
+  "body_water_kg": { "value": 37.8, "min": 31.6, "max": 39.4 },
+  "muscle_kg": { "value": 48.2, "min": 40.3, "max": 50.2 },
+  "skeletal_muscle_kg": { "value": 28.9, "min": 25.1, "max": 30.7 },
+  "body_fat_pct": 19.3,
+  "bone_mass_pct": 5.5,
+  "protein_pct": 16.2,
+  "body_water_pct": 59.2,
+  "muscle_pct": 75.4,
+  "skeletal_muscle_pct": 45.3,
+  "bmi": 23.8,
+  "obesity_degree_pct": 107,
+  "target_weight_kg": 60.5,
+  "weight_control_kg": -3.4,
+  "fat_control_kg": -3.4,
+  "muscle_control_kg": 0,
+  "visceral_fat_level": 4,
+  "bmr_kcal": 1484,
+  "fat_free_mass_kg": 51.7,
+  "subcutaneous_fat_pct": 13.8,
+  "smi": 8.3,
+  "body_age": 18,
+  "whr": 0.8,
+  "segment_fat": {
+    "left_arm": { "kg": 0.6, "pct": 103.8 },
+    "right_arm": { "kg": 0.5, "pct": 95.6 },
+    "trunk": { "kg": 6.1, "pct": 162.6 },
+    "left_leg": { "kg": 2, "pct": 134.6 },
+    "right_leg": { "kg": 2, "pct": 134.7 }
+  },
+  "segment_muscle": {
+    "left_arm": { "kg": 2.8, "pct": 101.7 },
+    "right_arm": { "kg": 2.9, "pct": 104.3 },
+    "trunk": { "kg": 22.4, "pct": 100.2 },
+    "left_leg": { "kg": 8.3, "pct": 106.5 },
+    "right_leg": { "kg": 8.3, "pct": 106.5 }
+  },
+  "impedance_ohm": {
+    "khz_20": { "left_arm": 338, "right_arm": 316.3, "trunk": 21.2, "left_leg": 275.6, "right_leg": 254.8 },
+    "khz_100": { "left_arm": 294.7, "right_arm": 271.7, "trunk": 18.7, "left_leg": 236.9, "right_leg": 217.8 }
+  }
+}

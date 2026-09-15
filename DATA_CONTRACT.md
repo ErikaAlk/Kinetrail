@@ -252,10 +252,18 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 
 **范围**：体重不在 (2, 400] kg 整组拒绝；其他类型越界时 raw 照存、该指标索引为 null 并标 `<type>_out_of_range`。
 
-**raw 与索引**：raw 为规范化整组（记录按类型、hc_id 码点排序，保留 HC 返回的 double 原值与 `last_modified_ms`、已删 id 列表）。索引 `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制；`body_water_pct` 由水分质量 ÷ 体重派生、保留 2 位小数并标 `body_water_pct_derived_from_mass`；`bmi` = 体重 ÷ (`HC_HEIGHT_CM` / 100)² 保留 1 位小数，标 `bmi_derived_from_height`（FitDays+ 不写 BMI；身高缺失或不在 (50, 250] 时不算；改身高只影响之后新产生的版本）；恒标 `source_health_connect`。与旧 FitDays 记录相比没有肌肉率、骨骼肌率、蛋白质、皮下脂肪、内脏脂肪、身体年龄，缺失指标不以 0 填补。
+**raw 与索引**：raw 为规范化整组（记录按类型、hc_id 码点排序，保留 HC 返回的 double 原值与 `last_modified_ms`、已删 id 列表）。索引 `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制；`body_water_pct` 由水分质量 ÷ 体重派生、保留 2 位小数并标 `body_water_pct_derived_from_mass`；`bmi` = 体重 ÷ (`HC_HEIGHT_CM` / 100)² 保留 1 位小数，标 `bmi_derived_from_height`（FitDays+ 不写 BMI；身高缺失或不在 (50, 250] 时不算；改身高只影响之后新产生的版本）；恒标 `source_health_connect`。与旧 FitDays 记录相比没有肌肉率、骨骼肌率、蛋白质、皮下脂肪、内脏脂肪、身体年龄，缺失指标不以 0 填补（挂了识图报告的组除外，见下）。
 
 **版本与删除**：已存 `hc_id` 的类型、值、修改时间与组的时区偏移不可变，冲突整组拒绝；只能补齐组内从未出现过的类型。HC 删除（`deleted_hc_ids`）把整条记录移入组的 `deleted_records` 并写新版本，删体重即 `is_deleted=1`；已删 id 与已删类型都不再接收；不物理删除。这是“来源明确 tombstone 才产生删除版本”（第 3 节）在 HC 来源上的实现。
 
 **截断与去重**：`HC_ACCEPT_AFTER`（线上为 2026-09-15T09:17:00+08:00，旧 FitDays 最后一条测量）之前的 HC 组不入库；两个来源不做跨来源匹配，也不同时导入同一时段。
+
+**识图报告**（2026-09-15）：手机本机 OCR FitDays+「人体成分分析报告」图片，在同一端点的可选 `reports[]` 里只发数字（schema 见 `src/ingest.ts` 的 `REPORT_SCHEMA`，Android 端与服务端测试共用 `tests/fixtures/android-report.json`）。
+
+- 匹配：报告时间是 FitDays+ 用设备时区把同一 `measure_time` 格式化为 `yyyy/MM/dd HH:mm` 的结果（截断，静态分析），`measured_minute_ms` 为该分钟起点。在合并与删除处理之后，从已发布组与本请求的组里找 `time_ms ∈ [分钟, 分钟+60s)`、体重记录仍有效且与报告体重相差 ≤ 0.01 kg 的组；恰好一个才挂，零个 `REPORT_NO_MATCH`，多个 `REPORT_AMBIGUOUS`；组里有体脂记录（含已删除的）且与报告体脂率相差超过 0.05 时 `REPORT_MISMATCH`（HC 体脂越界的组因此挂不上报告）；同一请求同一分钟两份 `REPORT_DUPLICATE`。报告与 HC 记录来自同一条称重，分钟与体重都要对上、多候选拒绝，不属于“凭时间相近合并两次称重”。
+- 存储：报告整体存为组 raw 的 `report` 键（键名排序后保存；没有报告时不写这个键，已存组的哈希不变）。挂上后不可变，再来不同的报告 `REPORT_CONFLICT`，相同的计 `unchanged`；之后补 HC 类型或删除记录都保留报告。
+- 索引：只补 HC 从没给过的指标。补 `muscle_pct`、`skeletal_muscle_pct`、`protein_pct`、`subcutaneous_fat_pct`、`visceral_fat_index`（报告的内脏脂肪等级）、`body_age`、`smi`、`whr`；`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`body_water_pct` 只在组里（含 `deleted_records`）从未出现对应 HC 类型时才补，HC 已有、越界或在 HC 里删掉的都不由报告填回；`bmi` 只在没法按身高推算时补。标 `report_attached`。体脂率比对同时看已删除的体脂记录；原样重发先于比对判为 `unchanged`。分段脂肪/肌肉（kg 与 %）、阻抗、标准范围、体重控制、身体得分、肥胖度只在 raw。
+- 阻抗是报告显示值：FitDays+ 画报告前把原始 imps 重排，并对部分分段乘 0.826（`ICAFReportDataShowActivity.K`），不等于秤的原始阻抗。分段的左右按报告标注（左列为左臂、左腿）。
+- 报告只能挂到已入库的称重上；不经测量页、没进 HC 的称重，报告目前无处可挂。
 
 **批次**：每次推送一个 `sync_batches`（`source_region='health_connect'`、`mode='incremental'`、`coverage='unknown'`），在 `sync_lease` 内读取已存组、合并、暂存、原子发布；中断批次由调度标失败但不重排。

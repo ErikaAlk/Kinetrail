@@ -15,6 +15,7 @@
 - 未分类的自由字符串 fail-closed（整条不发布、批次 partial），不能为了“同步成功”放宽。
 - 查询只读已发布快照（`queries.ts` 的 `VISIBLE`），读工具不触发同步；训练写工具 `readOnlyHint=false`。`refresh_data` 已下线（体测改由手机推送），不要为“数据新鲜”加回服务端拉取。
 - Health Connect 推送（`src/ingest.ts`）：令牌只存 SHA-256；只写 `hc:` 前缀、`HC_PROFILE_REF` 的 weight 记录，碰不到 FitDays 来源；已存 `hc_id` 的值不可变，删除只写 tombstone 新版本；读取、合并、发布都在 `sync_lease` 内。推送批次被调度回收时不得重排成 FitDays 拉取任务（会登录 FitDays+ 顶掉手机）。FitDays+ 只把主用户写进 HC，FitDays+ 升级后重跑 G-HC3。
+- 识图报告（`reports[]`）：手机本机 OCR，请求里只有数字；只挂到同一分钟、体重相同、恰好一组的已入库 HC 称重上，挂上后不可变；只补 HC 没有的指标，不覆盖 HC 值。不要为了“能挂上”放宽匹配（按时间就近、忽略体重），也不要把图片传到服务端识别。解析与交叉校验在 `android/.../report/ReportParser.kt`，请求 JSON 与服务端测试共用 `tests/fixtures/android-report.json`。
 - 训练写入：先查收据，再校验，再单个 D1 batch 提交（guard 表 CAS）；约束失败为 not_committed，其他批量错误且查不到收据为 unknown。V1 没有 hard delete，事实表由触发器兜底。
 - 只存本人：`PROFILE_ALLOWLIST` 限定入库的 FitDays 成员（当前 Erika），其他成员和无 suid 的记录在消毒前丢弃。不要为“数据更全”清空它；换人时写 profile_ref，不写原始 suid。事实表唯一的物理删除是用户授权的 `scripts/purge-non-owner-profiles.sql`，已于 2026-09-15 执行。
 - 每次同步尝试一个 batch_id；只有持有 lease 的尝试能发布或写错误状态。
@@ -32,4 +33,7 @@
 - MCP Inspector 在 Windows 的 Node 24 下退出时会崩溃，互通检查固定用 Node 22.23.2。
 - Write 工具会把字符串里的 `\u0000` 写成真实 NUL 字节，源码里需要分隔符时用可见字符或确认文件内容。Bash heredoc 会把 `'\n'` 这类转义吃掉，写含反斜杠的代码或文档用 Write/Edit 工具。
 - `android/` 的 Gradle 在 Claude Code 进程树里直接跑会报 loopback 连接失败，按 `android/README.md` 用 WMI 拉出进程树并隐藏窗口。
+- ML Kit 在报告的衬线字体上会读错形近字（体→休、控→挖、肉→內）和符号（`|`、`%`→`96`），加新标签前先看 `android/app/src/test/resources/mlkit-replica-ocr.json` 里的真实读法。
+- 用 `adb shell am start -a android.intent.action.SEND --eu android.intent.extra.STREAM content://media/...` 模拟分享会因 shell 没有媒体授权报 SecurityException，验证识图改走 App 里的相册选图。Git Bash 里的 adb 路径参数要加 `MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 会被改写成 Windows 路径。
+- Kotlin KDoc 里写 `values*/` 这类含 `*/` 的路径会提前结束注释，编译报一串 “Expecting a top level declaration”。
 - 手机插在 VID 2109 的 USB 集线器上时，Windows 能枚举 ADB 接口，但 adb 读序列号报错 31、`adb devices` 为空；直插笔记本 USB 口。ColorOS 上 `adb install` 要在手机上点确认，命令超时不代表失败。

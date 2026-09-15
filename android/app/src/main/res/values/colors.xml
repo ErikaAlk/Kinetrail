@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- KtPalette 的 XML 镜像，只放 XML 读不到 Kotlin 常量的冷启动底色与启动图标。改这里同时改 KtPalette.kt。 -->
+<resources>
+    <color name="canvas">#F3FBFD</color>
+    <color name="launcher_background">#00778F</color>
+</resources>

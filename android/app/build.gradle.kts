@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -14,15 +15,24 @@ android {
         // 只给本人手机（Android 16）用；34 起 HC 是系统模块，不用处理独立 HC App 的分支。
         minSdk = 34
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
+        // 本人手机是 arm64；x86_64 留给模拟器验证识图。ML Kit 中文识别模型按 ABI 打包，不留其他架构。
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
-    buildFeatures { buildConfig = true }
+    buildFeatures {
+        buildConfig = true
+        compose = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     }
 }
 
@@ -32,6 +42,19 @@ kotlin {
 
 dependencies {
     implementation("androidx.health.connect:connect-client:1.1.0")
-    implementation("androidx.activity:activity-ktx:1.11.0")
+    implementation("androidx.activity:activity-compose:1.11.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
+
+    implementation(platform("androidx.compose:compose-bom:2025.10.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    // 顶栏背后的真背景模糊（全局 4.6 不许手写采样）。1.7+ 用 Kotlin 2.3 编译，与 2.2.20 不兼容。
+    implementation("dev.chrisbanes.haze:haze:1.6.10")
+
+    // 报告识图：打包进 APK 的中文模型，离线运行，图片不出手机。
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.2.20")
 }
