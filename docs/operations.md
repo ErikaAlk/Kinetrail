@@ -168,8 +168,8 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | 批次 `partial` | 有记录被阻断或出现未知数据集 | 按第 3 节查询 `blocked_items`；partial 不推进增量检查点 |
 | 读工具 `stale:true` | 36 小时没有成功发布，或最近一次尝试失败 | 在手机上打开“身迹同步”推送；查 Observability 的 `event:"ingest"`。`refresh_data` 已下线，不要为此恢复 FitDays 拉取（会顶掉手机 App 的登录） |
 | 推送 HTTP 401 | 手机上的令牌与 `HC_INGEST_TOKEN_SHA256` 不符 | 按第 9 节重新生成并保存令牌 |
-| 推送 HTTP 503 `not_configured` / `busy` | 缺 `HC_ACCEPT_AFTER`/`HC_PROFILE_REF` 变量；或 lease 被占用 | 补变量后部署；`busy` 稍后再同步即可 |
-| 推送 200 但 `rejected` 非空 | 逐组拒绝：`HC_BEFORE_CUTOVER`、`HC_FUTURE_TIME`、`HC_VALUE_OUT_OF_RANGE`、`HC_DUPLICATE_TYPE`、`HC_DUPLICATE_GROUP`、`HC_GROUP_WITHOUT_WEIGHT`、`HC_GROUP_CONFLICT` | 截断点之前的历史被拒是预期；`HC_VALUE_OUT_OF_RANGE` 只针对体重（其他指标越界只是索引为 null）。`HC_GROUP_CONFLICT` 表示同一时刻的已存值与手机不一致，正常数据不会出现：App 会停止推进同步进度，先按第 6 节轮换令牌，再用 `SELECT id, counts_json FROM sync_batches WHERE source_region='health_connect'` 找异常批次 |
+| 推送 HTTP 503 `not_configured` / `busy` | 缺 `HC_ACCEPT_AFTER`/`HC_PROFILE_REF` 变量，或 `HC_PROFILE_REF` 不在库里已有成员中（日志 `status:"profile_mismatch"`）；`busy` 为 lease 被占用 | 核对变量后部署；`busy` 稍后再同步即可 |
+| 推送 200 但 `rejected` 非空 | 逐组拒绝：`HC_BEFORE_CUTOVER`、`HC_FUTURE_TIME`、`HC_VALUE_OUT_OF_RANGE`、`HC_DUPLICATE_TYPE`、`HC_DUPLICATE_GROUP`、`HC_GROUP_WITHOUT_WEIGHT`、`HC_GROUP_CONFLICT` | 截断点之前的历史被拒是预期；`HC_VALUE_OUT_OF_RANGE` 只针对体重（其他指标越界只是索引为 null）。`HC_GROUP_CONFLICT` 表示同一时刻的已存值与手机不一致，正常数据不会出现：App 会停止推进同步进度。轮换令牌只能阻止继续写入，冲突本身来自库里已有的组，按第 9 节“冲突处理”清理后才能恢复 |
 | `SYNC_IN_PROGRESS` | 已有任务或处于冷却（增量 60 秒、全量 24 小时） | 按 `retry_after_seconds` 等待 |
 | `RATE_LIMITED` / HTTP 429 | `/mcp` 每 owner 120 次 HTTP 请求/分（含 tools/list 等）；工具读 60/分、写 20/分；`/authorize` 10/分/IP、token 20/分 | 等待；异常增长时检查是否有脚本循环调用 |
 | `REVISION_CONFLICT` | 会话已被其他写入推进 | 先 `get_open_workout_sessions` 读回 revision，确认内容后用**新**幂等键重写 |
@@ -220,6 +220,13 @@ Remove-Variable ingestToken, ingestHash
 ```bash
 npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_json, error_code, created_at FROM sync_batches WHERE source_region = 'health_connect' ORDER BY created_at DESC LIMIT 5"
 ```
+
+**冲突处理**（App 提示 `HC_GROUP_CONFLICT`）：正常数据不会出现冲突，出现时按令牌泄漏处理。
+
+1. 按第 6 节轮换令牌，阻止继续写入。
+2. 找出可疑批次与被占用的时刻（只看结构）：`SELECT id, created_at, counts_json FROM sync_batches WHERE source_region = 'health_connect' ORDER BY created_at DESC LIMIT 20`，再用批次 id 查 `raw_record_versions` 的 `source_record_id` 与 `measured_at`，和手机 HC 里的真实称重对照。
+3. 端点无法删除 HC 里不存在的记录，注入的组需要一次性脚本经暂存/发布写 tombstone 版本（或按 `scripts/purge-non-owner-profiles.sql` 的方式物理删除）。两种都会改变线上事实数据，**执行前必须单独征得用户授权**；目前没有现成脚本。
+4. 清理后打开 App 重新同步；手机 token 一直未推进，真实数据会补齐。若停住超过 30 天，HC 变更记录过期，App 退回首次同步，期间在 HC 里做的删除需要人工核对。
 
 **上线后**：确认推送正常后删除 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（`wrangler secret delete`），防止任何路径再登录 FitDays+。
 

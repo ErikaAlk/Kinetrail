@@ -66,9 +66,9 @@ class HealthSync(
         val (groups, deletions, nextToken) = fromChanges ?: initial()
         push(groups, deletions)
         // 冲突说明同一时刻的已存值与手机不一致；FitDays+ 不会改写 HC 记录，正常数据不会出现。
-        // 不推进 token，保留重试机会，同时提示检查令牌是否泄漏。
+        // 不推进 token，数据留在 HC 里；冲突来自库里已有的组，轮换令牌只能阻止继续写入，清理要按运维手册处理。
         if ("HC_GROUP_CONFLICT" in rejectCodes) {
-            throw PushException("服务端报告数据冲突（HC_GROUP_CONFLICT），已暂停推进同步进度。可能是推送令牌泄漏，请轮换令牌后再同步")
+            throw PushException("服务端报告同一时刻的数据冲突（HC_GROUP_CONFLICT），同步进度已暂停。可能有人用泄漏的令牌写入了数据：先轮换令牌，再按运维手册第 9 节清理后重新同步")
         }
         prefs.edit().putString(TOKEN_KEY, nextToken).apply()
         val rejected = if (rejectCodes.isEmpty()) "" else "（${rejectCodes.joinToString("、")}）"
@@ -225,7 +225,8 @@ class HealthSync(
                 throw PushException(
                     when (status) {
                         401 -> "令牌无效，请重新保存令牌"
-                        429, 503 -> "服务端忙（$status $code），稍后再同步"
+                        503 -> if (code == "not_configured") "服务端配置不完整（not_configured），需要检查 HC_ACCEPT_AFTER 与 HC_PROFILE_REF" else "服务端忙（503 $code），稍后再同步"
+                        429 -> "请求过于频繁（429），稍后再同步"
                         else -> "推送失败：HTTP $status $code"
                     },
                 )
