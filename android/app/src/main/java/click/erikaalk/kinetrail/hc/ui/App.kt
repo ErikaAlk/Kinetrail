@@ -89,6 +89,7 @@ private fun Root(state: AppState, actions: AppActions) {
             ) {
                 when (state.screen) {
                     Screen.Home -> HomeScreen(state, actions, insets)
+                    Screen.Calendar -> CalendarScreen(state, actions, insets)
                     Screen.Report -> ReportScreen(state, actions, insets)
                     Screen.Token -> TokenScreen(actions, insets)
                 }
@@ -97,6 +98,7 @@ private fun Root(state: AppState, actions: AppActions) {
         KtPageHeader(
             title = when (state.screen) {
                 Screen.Home -> "身迹同步"
+                Screen.Calendar -> "训练日历"
                 Screen.Report -> "核对报告"
                 Screen.Token -> "推送令牌"
             },

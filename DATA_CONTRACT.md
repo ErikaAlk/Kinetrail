@@ -120,7 +120,7 @@ measurement_index: raw_version_id, owner_id, profile_ref, device_ref,
 ```text
 workout_sessions: id, owner_id, started_at, ended_at?, timezone,
   status(open|finalized), revision, facility?, title?, duration_seconds?,
-  duration_source(user_reported|timestamps|unknown), overall_rpe?, notes?, created_at, updated_at
+  duration_source(user_reported|timestamps|unknown), overall_rpe?, calories_kcal?, notes?, created_at, updated_at
 workout_events: id, owner_id, session_id, operation, occurred_at,
   raw_text, completion_assertion, evidence_origin, parsed_json,
   schema_version, parser_version, idempotency_key, payload_hash,
@@ -159,7 +159,7 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 
 ## 5. 单位与可重复统计
 
-结束总结的 duration_seconds、duration_source、overall_rpe、notes 必须随事件提交并可由 get_workout_history 回读；未知为 null，重开不抹去旧版本。timestamps 仅用于明确起止的会话跨度，不能冒充有氧运动时长。
+结束总结的 duration_seconds、duration_source、overall_rpe、calories_kcal、notes 必须随事件提交并可由 get_workout_history 回读；未知为 null，重开不抹去旧版本。timestamps 仅用于明确起止的会话跨度，不能冒充有氧运动时长。`calories_kcal` 是手表给的整场消耗（kcal，(0, 20000]），由用户报告、模型随 finalize 提交；它是手表的估算值，不是实测，也不参与任何训练指标计算，只按自然日汇总显示。
 
 未知或特殊单位使用 load_original、distance_original、speed_original 的 {value,unit} 保存，不能塞入受限枚举。辅助负重以非负 assistance_value + assistance_unit 表示，原报告负号另存 load_original。服务端输出 StoredEntry.normalized_sets 与 sets 一一对应，保留 normalization_version；无法转换的标准值为 null 并附 quality_flags。客户端不能提供标准化计算值。
 
@@ -267,3 +267,21 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 - 报告只能挂到已入库的称重上；不经测量页、没进 HC 的称重，报告目前无处可挂。
 
 **批次**：每次推送一个 `sync_batches`（`source_region='health_connect'`、`mode='incremental'`、`coverage='unknown'`），在 `sync_lease` 内读取已存组、合并、暂存、原子发布；中断批次由调度标失败但不重排。
+
+## 9. 手机日历读取（2026-09-16，Opus 5）
+
+手机上的日历界面要在一屏里显示「当天消耗热量 + 当天训练 + 当天体测」，这三样都在服务端，所以另开一个只读入口 `GET /app/calendar`（实现为 `src/calendar.ts`）。它不是 MCP 工具，也不改变 MCP 契约。
+
+**鉴权**：复用 Health Connect 推送令牌（`HC_INGEST_TOKEN_SHA256`），常数时间比对，按 IP 与全局两层限流；未配置令牌或非 GET 与不存在的路径表现一致（404）。这是一次明确的扩权决定（2026-09-16 用户批准）：令牌泄漏后除了写 HC 体重，还能读出全部体测与训练事实，处置办法是按运维手册第 6 节轮换。
+
+**参数**：`from`、`to` 为含首含尾的自然日（`YYYY-MM-DD`，非真实日期直接拒绝），`tz` 为 IANA 时区，默认 `Asia/Shanghai`；窗口最长 62 天，`from > to` 拒绝。
+
+**归档口径**：训练按会话 `started_at_ms` 在请求时区里的自然日归档，体测按 `measured_at` 的自然日；与趋势口径一致，不用 UTC 日。日期下的 `calories_kcal` 是当天各会话 `calories_kcal` 之和，全天都没填就是 null，不用 0 冒充。
+
+**可见性**：体测只读已发布快照（`VISIBLE`，同 MCP 读工具），排除 `is_deleted=1`，按 `HC_PROFILE_REF` 过滤；训练只给每个动作当前生效的版本，被撤回或被修订的旧版本不出现。响应不触发任何同步。指标用与 `get_measurements` 相同的 `metrics`（含派生的 `fat_mass_kg`、`fat_free_mass_kg`）。
+
+**输出边界**：不含 `raw_text`（用户原话）与 `normalized_sets`；会话与动作的备注照原文给出。整份响应发出前过 `findSecretPath`，命中就整份不发（500），与 MCP 只读工具同一条底线。
+
+**上限**：一次最多 200 个会话、600 个动作版本、400 条体测，命中任一上限时 `truncated=true`，界面必须说出来而不是假装完整。
+
+**契约固定**：`tests/fixtures/calendar-response.json` 是服务端测试逐字比对的响应，手机端解析的单测读同一个文件（与 `android-report.json` 同一做法），两边不会各自漂移。

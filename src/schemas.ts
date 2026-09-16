@@ -24,6 +24,8 @@ const nullable = (schema: Schema): Schema => ({ anyOf: [schema, { type: 'null' }
 
 const ID = string(128)
 const TEXT = string(4096)
+// 整场消耗热量（kcal）：手表汇总值，上限按一场训练的量级设，不承担医学口径。
+const KCAL: Schema = { type: 'number', minimum: 0, maximum: 20000 }
 const TIME: Schema = { type: 'string', format: 'date-time' }
 const BOOL: Schema = { type: 'boolean' }
 const original = () =>
@@ -112,6 +114,7 @@ defs.Session = obj(
     duration_seconds: nullable(integer()),
     duration_source: enumOf('user_reported', 'timestamps', 'unknown'),
     overall_rpe: nullable({ type: 'number', minimum: 0, maximum: 10 }),
+    calories_kcal: nullable(KCAL),
     notes: nullable(TEXT),
   },
   [
@@ -126,6 +129,7 @@ defs.Session = obj(
     'duration_seconds',
     'duration_source',
     'overall_rpe',
+    'calories_kcal',
     'notes',
   ],
 )
@@ -484,6 +488,7 @@ tool(
     raw_text: TEXT,
     duration_seconds: integer(),
     overall_rpe: { type: 'number', minimum: 0, maximum: 10 },
+    calories_kcal: KCAL,
     notes: TEXT,
   },
   ['idempotency_key', 'expected_revision', 'session_id', 'ended_at', 'raw_text'],

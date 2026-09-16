@@ -15,8 +15,8 @@ android {
         // 只给本人手机（Android 16）用；34 起 HC 是系统模块，不用处理独立 HC App 的分支。
         minSdk = 34
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
         // 本人手机是 arm64；x86_64 留给模拟器验证识图。ML Kit 中文识别模型按 ABI 打包，不留其他架构。
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
@@ -56,5 +56,7 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
 
     testImplementation("junit:junit:4.13.2")
+    // 单测里解析日历响应用的 org.json 实现；Android 自带的那份在 JVM 单测里是会抛异常的桩。
+    testImplementation("org.json:json:20240303")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.2.20")
 }

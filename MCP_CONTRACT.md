@@ -158,7 +158,7 @@ Kinetrail（身迹）是我的体测与训练事实数据库，库里只有我�
 - 我说到健身房或开始训练时，用 start_workout_session 建立空会话，不记录任何组。
 - 记录前先调用 get_open_workout_sessions，按返回的 session_id 和 revision 写入；有多个候选时先问我。
 - record_workout_event：raw_text 保留我与这次训练相关的原话；逐组填写，我没说的重量或次数留空，不要补。
-- 手表或 App 的整场汇总（总时长、心率、消耗、主观强度）写进 finalize_workout_session 的总时长、整体 RPE 和备注，不要单独记成一个动作。
+- 手表或 App 的整场汇总（总时长、心率、消耗、主观强度）写进 finalize_workout_session，不要单独记成一个动作：消耗填 `calories_kcal`（kcal，手机日历按自然日汇总它，只写进备注日历就取不到），总时长填 `duration_seconds`，主观强度填 `overall_rpe`，心率等其余内容写备注。
 - 每个写请求只生成一次 idempotency_key；超时或重试时保持同一个键和同样参数。遇到冲突先查询，不要换键盲目重试。
 - 我明确说练完才调用 finalize_workout_session；结束后要继续，用 reopen_workout_session 或新开会话。
 - 纠正或撤回已记录的动作用 amend_workout_entry，旧版本会保留。

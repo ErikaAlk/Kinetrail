@@ -1,0 +1,143 @@
+{
+  "schema_version": "1",
+  "timezone": "Asia/Shanghai",
+  "from": "2026-09-01",
+  "to": "2026-09-30",
+  "stale": false,
+  "synced_at": "2026-09-20T20:00:00+08:00",
+  "truncated": false,
+  "days": [
+    {
+      "date": "2026-09-14",
+      "calories_kcal": 500.5,
+      "sessions": [
+        {
+          "status": "finalized",
+          "started_at": "2026-09-14T09:10:00+08:00",
+          "ended_at": "2026-09-14T10:10:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "facility": null,
+          "duration_seconds": 3600,
+          "overall_rpe": null,
+          "calories_kcal": 320,
+          "notes": null,
+          "entries": [
+            {
+              "exercise_name_raw": "高位下拉",
+              "category": "strength",
+              "equipment_label": "器械A",
+              "sets": [
+                {
+                  "load_value": 45,
+                  "load_unit": "kg",
+                  "reps": 12
+                },
+                {
+                  "load_value": 45,
+                  "load_unit": "kg",
+                  "reps": 10
+                }
+              ],
+              "notes": null
+            }
+          ]
+        },
+        {
+          "status": "finalized",
+          "started_at": "2026-09-14T19:00:00+08:00",
+          "ended_at": "2026-09-14T20:00:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "facility": null,
+          "duration_seconds": 3600,
+          "overall_rpe": 7.5,
+          "calories_kcal": 180.5,
+          "notes": "手表记的整场：60 分钟，180 千卡，平均心率 128",
+          "entries": [
+            {
+              "exercise_name_raw": "高位下拉",
+              "category": "strength",
+              "equipment_label": "器械A",
+              "sets": [
+                {
+                  "load_value": 45,
+                  "load_unit": "kg",
+                  "reps": 12
+                },
+                {
+                  "load_value": 45,
+                  "load_unit": "kg",
+                  "reps": 10
+                }
+              ],
+              "notes": null
+            },
+            {
+              "exercise_name_raw": "跑步机",
+              "category": "cardio",
+              "equipment_label": null,
+              "sets": [
+                {
+                  "duration_seconds": 1200,
+                  "distance_value": 3,
+                  "distance_unit": "km"
+                }
+              ],
+              "notes": null
+            }
+          ]
+        }
+      ],
+      "measurements": [
+        {
+          "measured_at": "2026-09-14T22:30:00+08:00",
+          "metrics": {
+            "body_fat_pct": 19,
+            "weight_kg": 63.1,
+            "bmi": 23.5,
+            "fat_mass_kg": 11.989,
+            "fat_free_mass_kg": 51.111000000000004
+          },
+          "quality_flags": ["bmi_derived_from_height", "source_health_connect"]
+        }
+      ]
+    },
+    {
+      "date": "2026-09-16",
+      "calories_kcal": null,
+      "sessions": [
+        {
+          "status": "finalized",
+          "started_at": "2026-09-16T19:00:00+08:00",
+          "ended_at": "2026-09-16T20:00:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "facility": null,
+          "duration_seconds": 3600,
+          "overall_rpe": null,
+          "calories_kcal": null,
+          "notes": null,
+          "entries": [
+            {
+              "exercise_name_raw": "高位下拉",
+              "category": "strength",
+              "equipment_label": "器械A",
+              "sets": [
+                {
+                  "load_value": 45,
+                  "load_unit": "kg",
+                  "reps": 12
+                },
+                {
+                  "load_value": 45,
+                  "load_unit": "kg",
+                  "reps": 10
+                }
+              ],
+              "notes": null
+            }
+          ]
+        }
+      ],
+      "measurements": []
+    }
+  ]
+}

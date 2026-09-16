@@ -1,8 +1,8 @@
 # 身迹同步（Kinetrail Health Connect 客户端）
 
-读取手机上 FitDays+ 写入 Health Connect 的体测，推送到 Kinetrail 的 `POST /ingest/health-connect`；也能识别 FitDays+ 的人体成分分析报告图片，把 HC 里没有的读数挂到同一次称重上。设计、实测与服务端规则见 [`research/HEALTHCONNECT.md`](../research/HEALTHCONNECT.md)（报告见第 6 节），令牌与运维见 [`docs/operations.md`](../docs/operations.md) 第 9 节。
+读取手机上 FitDays+ 写入 Health Connect 的体测，推送到 Kinetrail 的 `POST /ingest/health-connect`；也能识别 FitDays+ 的人体成分分析报告图片，把 HC 里没有的读数挂到同一次称重上；还有一个从服务端读数据的训练日历。设计、实测与服务端规则见 [`research/HEALTHCONNECT.md`](../research/HEALTHCONNECT.md)（报告见第 6 节），日历的服务端规则见 [`DATA_CONTRACT.md`](../DATA_CONTRACT.md) 第 9 节，令牌与运维见 [`docs/operations.md`](../docs/operations.md) 第 9、10 节。
 
-当前版本 0.3.0：Compose 界面与启动图标；打开 App 时自动同步一次（需已保存令牌且 7 项读取权限齐全），另有“立即同步”；识图报告。没有后台任务。
+当前版本 0.4.0：Compose 界面与启动图标；打开 App 时自动同步一次（需已保存令牌且 7 项读取权限齐全），另有“立即同步”；识图报告；训练日历。没有后台任务。
 
 ## 同步
 
@@ -22,6 +22,14 @@
 - 核对页列出全部读数；有字段没认出或报告内交叉校验不过（成分 kg 与百分比、去脂体重、体重控制、BMI、阻抗随频率下降等）时不给上传，只能重新选图。
 - 上传：先同步一次 HC，再发 `reports[]`（只有数字，格式与 `tests/fixtures/android-report.json` 一致，单测逐字比对）。服务端只把报告挂到同一分钟、体重相同的那次已入库称重上，挂上后不可改；找不到、有歧义、体脂率对不上时不写入并给出原因。
 - 调试版会把最近一次识别的文本行写到应用私有目录 `files/last-ocr.json`，用于对照真实报告调解析规则：`adb shell run-as click.erikaalk.kinetrail.hc cat files/last-ocr.json`。发布版不写。
+
+## 训练日历
+
+- 入口：首页“训练日历”。数据全部来自 `GET /app/calendar`（与推送同一个令牌），一次取一个月；与 Health Connect 无关，打开日历不会触发同步，也不需要额外权限。
+- 日期下的小字是当天训练会话的 `calories_kcal` 之和——手表的消耗要由模型在结束训练时写进 Kinetrail（用户把手表截图给模型），没写就没有小字，只留一个点表示当天有训练。右上角的点表示当天称过体重。
+- 点日期展开当天：每个会话给时间段、时长、消耗、RPE、场馆和逐组动作（相同负重的连续组合并成「45 kg × 12、12、10」）；当天称过体重就按体脂秤读数列出全部指标，含报告补的内脏脂肪、骨骼肌、BMI 这些。再点一次收起。
+- 翻月会重新请求；请求失败、没保存令牌、服务端没部署日历接口都会在页面上说明原因，不会显示空月份假装没有记录。服务端按上限截断时页面会明说只是一部分。
+- 解析与格式化在 `calendar/CalendarData.kt`，单测 `CalendarDataTest` 读的是服务端测试逐字比对的 `tests/fixtures/calendar-response.json`，两边不会各自漂移。
 
 ## 界面
 
@@ -51,5 +59,7 @@ APK 只打 arm64-v8a（手机）和 x86_64（模拟器验证识图）两种 ABI�
 ```bash
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+日历需要服务端先应用 `0002_session_calories.sql` 并部署新版 Worker，否则页面会提示接口不存在。
 
 手机要直插电脑（不要经过 USB 集线器），ColorOS 会在手机上弹安装确认。首次安装后按 `docs/operations.md` 第 9 节生成并保存令牌；从 0.2.0 覆盖安装会保留令牌和同步进度。
