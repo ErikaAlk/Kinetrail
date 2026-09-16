@@ -93,6 +93,8 @@ class MainActivity : ComponentActivity(), AppActions {
 
     override fun navigate(screen: Screen) {
         state.screen = screen
+        // 记录页：当月数据还没取到（首次进入、上次失败、或换过月份）才发请求；已经取到就保留上次选中的日期。
+        if (screen == Screen.Records && state.calendarLoadedMonth != state.month) showMonth(state.month)
     }
 
     override fun requestPermissions() = requestPermissions.launch(permissions)
@@ -103,7 +105,7 @@ class MainActivity : ComponentActivity(), AppActions {
         if (token.length < 32) return false
         TokenStore.save(prefs, token)
         state.tokenSaved = true
-        state.screen = Screen.Home
+        state.screen = Screen.Settings
         if (state.grantedPermissions == permissions.size) sync() else if (state.grantedPermissions != null) requestPermissions()
         return true
     }
@@ -111,12 +113,6 @@ class MainActivity : ComponentActivity(), AppActions {
     override fun sync() {
         if (running?.isActive == true) return
         running = lifecycleScope.launch { runSync() }
-    }
-
-    override fun openCalendar() {
-        state.screen = Screen.Calendar
-        // 当月数据还没取到（首次进入、上次失败、或换过月份）才发请求；已经取到就保留上次选中的日期。
-        if (state.calendarLoadedMonth != state.month) showMonth(state.month)
     }
 
     override fun showMonth(month: YearMonth) {

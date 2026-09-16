@@ -66,7 +66,7 @@ fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
             .verticalScroll(rememberScrollState())
             .padding(top = insets.top, bottom = insets.bottom),
     ) {
-        PageTitle(text = "训练日历", onTitleBounds = insets.onTitleBounds)
+        PageTitle(text = Screen.Records.title, onTitleBounds = insets.onTitleBounds)
 
         Row(
             Modifier
@@ -111,6 +111,16 @@ fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
         }
 
         MonthGrid(state, actions, today)
+
+        // 原来这句挂在首页那个日历入口的组说明里；入口换成底栏之后，说明跟着数据留在这一页。
+        Text(
+            "日期下的小字是手表记录的当天消耗，随训练一起写入 Kinetrail。",
+            style = KtType.secondary,
+            color = colors.text.secondary,
+            modifier = Modifier
+                .padding(horizontal = KtSpacing.Padding.pageX)
+                .padding(top = KtSpacing.Gap.group),
+        )
 
         if (state.calendarTruncated) {
             InlineBanner(

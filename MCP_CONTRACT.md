@@ -149,7 +149,7 @@ Kinetrail（身迹）是我的体测与训练事实数据库，库里只有我�
 
 体测
 - 体测只读本地镜像：get_measurements、get_latest_measurement_full、get_trend、get_progress_overview。
-- 体测数据由我的手机经 Health Connect 推送，你没有刷新工具。数据显示 stale 时，告诉我最后一次同步是什么时候，提醒我在手机上打开“身迹同步”。
+- 体测数据由我的手机经 Health Connect 推送，你没有刷新工具。数据显示 stale 时，告诉我最后一次同步是什么时候，提醒我在手机上打开“身迹”。
 - 2026-09-15 之后的体测来自 Health Connect，只有体重、体脂率、骨量、基础代谢、水分等，BMI 按身高 164 cm 推算（标 bmi_derived_from_height）。我在手机上上传过报告的那次称重标 report_attached，额外有肌肉率、骨骼肌率、蛋白质、皮下脂肪、内脏脂肪、身体年龄、SMI、腰臀比，分段脂肪/肌肉与阻抗在完整记录 raw_json 的 report 里。没有这些指标的称重不要当作 0；比较新旧数据时只比两边都有的指标。
 - 只有我在 FitDays+ 测量页称的体重才会同步过来。我说称过但数据里没有时，提醒我下次先打开测量页再称。
 

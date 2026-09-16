@@ -166,7 +166,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | `UPSTREAM_TIMEOUT` | 单请求 15 秒 / 整个任务 120 秒超时，已有限重试 | 稍后重试；持续出现时查看是否需要缩小 `SYNC_POLICY.windowSeconds` |
 | `INCOMPLETE_SYNC` | 响应非 JSON、超过 32 MiB、业务码非 0、任务被截断 | `wrangler tail` 查看 `event:"sync"` 的 `category`（只含非敏感类别，如 `upstream_code_500`） |
 | 批次 `partial` | 有记录被阻断或出现未知数据集 | 按第 3 节查询 `blocked_items`；partial 不推进增量检查点 |
-| 读工具 `stale:true` | 36 小时没有成功发布，或最近一次尝试失败 | 在手机上打开“身迹同步”推送；查 Observability 的 `event:"ingest"`。`refresh_data` 已下线，不要为此恢复 FitDays 拉取（会顶掉手机 App 的登录） |
+| 读工具 `stale:true` | 36 小时没有成功发布，或最近一次尝试失败 | 在手机上打开“身迹”推送；查 Observability 的 `event:"ingest"`。`refresh_data` 已下线，不要为此恢复 FitDays 拉取（会顶掉手机 App 的登录） |
 | 推送 HTTP 401 | 手机上的令牌与 `HC_INGEST_TOKEN_SHA256` 不符 | 按第 9 节重新生成并保存令牌 |
 | 推送 HTTP 503 `not_configured` / `busy` | 缺 `HC_ACCEPT_AFTER`/`HC_PROFILE_REF` 变量，或 `HC_PROFILE_REF` 不在库里已有成员中（日志 `status:"profile_mismatch"`）；`busy` 为 lease 被占用 | 核对变量后部署；`busy` 稍后再同步即可 |
 | 推送 200 但 `rejected` 非空 | 逐组拒绝：`HC_BEFORE_CUTOVER`、`HC_FUTURE_TIME`、`HC_VALUE_OUT_OF_RANGE`、`HC_DUPLICATE_TYPE`、`HC_DUPLICATE_GROUP`、`HC_GROUP_WITHOUT_WEIGHT`、`HC_GROUP_CONFLICT` | 截断点之前的历史被拒是预期；`HC_VALUE_OUT_OF_RANGE` 只针对体重（其他指标越界只是索引为 null）。`HC_GROUP_CONFLICT` 表示同一时刻的已存值与手机不一致，正常数据不会出现：App 会停止推进同步进度。轮换令牌只能阻止继续写入，冲突本身来自库里已有的组，按第 9 节“冲突处理”清理后才能恢复 |
@@ -192,7 +192,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 
 ## 9. Health Connect 推送
 
-体测由手机上的“身迹同步”（`android/`）读取 FitDays+ 写入 Health Connect 的记录，推送到 `POST /ingest/health-connect`。规则见 DATA_CONTRACT 第 8 节与 `research/HEALTHCONNECT.md` 第 3 节。
+体测由手机上的“身迹”（`android/`）读取 FitDays+ 写入 Health Connect 的记录，推送到 `POST /ingest/health-connect`。规则见 DATA_CONTRACT 第 8 节与 `research/HEALTHCONNECT.md` 第 3 节。
 
 | 配置 | 位置 | 当前值 |
 | --- | --- | --- |
@@ -207,16 +207,16 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 $ingestToken = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 $ingestHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($ingestToken))).ToLower()
 $ingestHash | npx wrangler secret put HC_INGEST_TOKEN_SHA256
-# 手机直连电脑，打开“身迹同步” → 设置 → 推送令牌，点一下输入框，再运行：
+# 手机直连电脑，打开“身迹” → 底栏“设置” → 推送令牌，点一下输入框，再运行：
 adb shell input text $ingestToken
 Remove-Variable ingestToken, ingestHash
 ```
 
 然后在手机上点“保存”，App 会立刻同步一次。`adb shell input text` 运行期间令牌会短暂出现在手机 shell 的进程参数里。
 
-**日常**：先在 FitDays+ 里打开对应体脂秤的测量页，再站上秤，看到手机上的测量动画——只有这样称的才会写入 Health Connect；不经测量页的称重（秤端缓存后补传）不会进 Kinetrail，与是否联网无关。称完打开“身迹同步”即自动推送（V1 没有后台任务）。在 FitDays+ 里删除称重不会同步；要从 Kinetrail 去掉误测，到系统 Health Connect 的数据页删除那次的体重记录，再打开 App 同步。
+**日常**：先在 FitDays+ 里打开对应体脂秤的测量页，再站上秤，看到手机上的测量动画——只有这样称的才会写入 Health Connect；不经测量页的称重（秤端缓存后补传）不会进 Kinetrail，与是否联网无关。称完打开“身迹”即自动推送（V1 没有后台任务）。在 FitDays+ 里删除称重不会同步；要从 Kinetrail 去掉误测，到系统 Health Connect 的数据页删除那次的体重记录，再打开 App 同步。
 
-**体测报告**（可选，补齐肌肉、蛋白质、内脏脂肪、分段与阻抗）：在 FitDays+ 的人体成分分析报告页点分享，选“身迹同步”（或在 App 里“识别报告图片”选相册里的报告图）。手机本机识别，核对页的交叉校验全部通过才能上传；上传前 App 会先同步一次，报告只能挂到 Kinetrail 里已有的那次称重（同一分钟、体重相同）。一次称重的报告写入后不可改：识别错了又已上传，需要按冲突处理的思路单独清理。服务端要先部署支持 `reports[]` 的版本，旧版本会返回 400。
+**体测报告**（可选，补齐肌肉、蛋白质、内脏脂肪、分段与阻抗）：在 FitDays+ 的人体成分分析报告页点分享，选“身迹”（或在 App 的同步页“识别报告图片”选相册里的报告图）。手机本机识别，核对页的交叉校验全部通过才能上传；上传前 App 会先同步一次，报告只能挂到 Kinetrail 里已有的那次称重（同一分钟、体重相同）。一次称重的报告写入后不可改：识别错了又已上传，需要按冲突处理的思路单独清理。服务端要先部署支持 `reports[]` 的版本，旧版本会返回 400。
 
 **检查**（只看结构与计数）：
 

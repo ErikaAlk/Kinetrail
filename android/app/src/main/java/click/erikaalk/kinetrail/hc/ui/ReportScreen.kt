@@ -45,7 +45,7 @@ fun ReportScreen(state: AppState, actions: AppActions, insets: PageInsets) {
             .verticalScroll(rememberScrollState())
             .padding(top = insets.top, bottom = insets.bottom),
     ) {
-        PageTitle(text = "核对报告", onTitleBounds = insets.onTitleBounds)
+        PageTitle(text = Screen.Report.title, onTitleBounds = insets.onTitleBounds)
         val parsed = (state.report as? ReportState.Parsed)?.result
         if (parsed?.uploadable != true) Column(
             pad.padding(top = KtSpacing.pageTitleToSection),

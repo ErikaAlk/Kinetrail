@@ -8,7 +8,25 @@ import click.erikaalk.kinetrail.hc.report.ParseResult
 import java.time.LocalDate
 import java.time.YearMonth
 
-enum class Screen { Home, Calendar, Report, Token }
+/** 前三个是底栏上的一级目的地，后两个是从它们进去的子页面。 */
+enum class Screen(val title: String) {
+    Records("训练日历"),
+    Sync("体测同步"),
+    Settings("设置"),
+    Report("核对报告"),
+    Token("推送令牌"),
+}
+
+/**
+ * 这个页面归属的一级目的地。底栏据此高亮，返回键据此回退；
+ * 一级目的地自己返回自己，所以 `screen.tab == screen` 就是"没有可返回的上一层"。
+ */
+val Screen.tab: Screen
+    get() = when (this) {
+        Screen.Report -> Screen.Sync
+        Screen.Token -> Screen.Settings
+        else -> this
+    }
 
 sealed interface ReportState {
     data object Recognizing : ReportState
@@ -24,7 +42,8 @@ sealed interface UploadState {
 
 /** 界面状态。Activity 声明了 configChanges，不会因旋转或换主题重建，所以不需要 ViewModel。 */
 class AppState {
-    var screen by mutableStateOf(Screen.Home)
+    /** 打开就落在同步页：打开 App 会自动同步一次，结果显示在这一页。 */
+    var screen by mutableStateOf(Screen.Sync)
 
     var tokenSaved by mutableStateOf(false)
     /** null = Health Connect 不可用。 */
@@ -53,7 +72,6 @@ class AppState {
 /** 界面发给 Activity 的动作。 */
 interface AppActions {
     fun sync()
-    fun openCalendar()
     fun showMonth(month: YearMonth)
     fun selectDate(date: LocalDate)
     fun requestPermissions()
