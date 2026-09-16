@@ -17,6 +17,7 @@
 - Health Connect 推送（`src/ingest.ts`）：令牌只存 SHA-256；只写 `hc:` 前缀、`HC_PROFILE_REF` 的 weight 记录，碰不到 FitDays 来源；已存 `hc_id` 的值不可变，删除只写 tombstone 新版本；读取、合并、发布都在 `sync_lease` 内。推送批次被调度回收时不得重排成 FitDays 拉取任务（会登录 FitDays+ 顶掉手机）。FitDays+ 只把主用户写进 HC，FitDays+ 升级后重跑 G-HC3。
 - 识图报告（`reports[]`）：手机本机 OCR，请求里只有数字；只挂到同一分钟、体重相同、恰好一组的已入库 HC 称重上，挂上后不可变；只补 HC 没有的指标，不覆盖 HC 值。不要为了“能挂上”放宽匹配（按时间就近、忽略体重），也不要把图片传到服务端识别。解析与交叉校验在 `android/.../report/ReportParser.kt`，请求 JSON 与服务端测试共用 `tests/fixtures/android-report.json`。
 - 训练写入：先查收据，再校验，再单个 D1 batch 提交（guard 表 CAS）；约束失败为 not_committed，其他批量错误且查不到收据为 unknown。V1 没有 hard delete，事实表由触发器兜底。
+- 手机日历（`src/calendar.ts`）：只读，复用推送令牌（用户 2026-09-16 批准的扩权），只读 `VISIBLE` 快照与当前生效的动作版本，不触发同步；输出不含 `raw_text`，发出前过 `findSecretPath`。响应形状由 `tests/fixtures/calendar-response.json` 钉住，服务端与 Android 单测共用，改字段要同时改两边。手表消耗热量走 `finalize_workout_session` 的 `calories_kcal`，不走 Health Connect。
 - 只存本人：`PROFILE_ALLOWLIST` 限定入库的 FitDays 成员（当前 Erika），其他成员和无 suid 的记录在消毒前丢弃。不要为“数据更全”清空它；换人时写 profile_ref，不写原始 suid。事实表唯一的物理删除是用户授权的 `scripts/purge-non-owner-profiles.sql`，已于 2026-09-15 执行。
 - 每次同步尝试一个 batch_id；只有持有 lease 的尝试能发布或写错误状态。
 - 趋势按请求时区（默认 Asia/Shanghai）自然日：先日中位数，再对有数据日等权平均；派生值逐次先算；bfr≤0 不参与体脂类指标。

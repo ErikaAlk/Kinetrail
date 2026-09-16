@@ -17,6 +17,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.lifecycle.lifecycleScope
+import click.erikaalk.kinetrail.hc.calendar.fetchCalendar
 import click.erikaalk.kinetrail.hc.report.recognizeReport
 import click.erikaalk.kinetrail.hc.report.toIngestJson
 import click.erikaalk.kinetrail.hc.ui.AppActions
@@ -27,6 +28,8 @@ import click.erikaalk.kinetrail.hc.ui.Screen
 import click.erikaalk.kinetrail.hc.ui.UploadState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 
 class MainActivity : ComponentActivity(), AppActions {
@@ -35,6 +38,7 @@ class MainActivity : ComponentActivity(), AppActions {
     private val state = AppState()
     private var running: Job? = null
     private var reportAttempt = 0
+    private var calendarAttempt = 0
 
     private val requestPermissions =
         registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
@@ -107,6 +111,54 @@ class MainActivity : ComponentActivity(), AppActions {
     override fun sync() {
         if (running?.isActive == true) return
         running = lifecycleScope.launch { runSync() }
+    }
+
+    override fun openCalendar() {
+        state.screen = Screen.Calendar
+        // 当月数据还没取到（首次进入、上次失败、或换过月份）才发请求；已经取到就保留上次选中的日期。
+        if (state.calendarLoadedMonth != state.month) showMonth(state.month)
+    }
+
+    override fun showMonth(month: YearMonth) {
+        state.month = month
+        // 只有当月默认选中今天；翻到别的月份先不选，等用户点。
+        state.selectedDate = LocalDate.now().takeIf { YearMonth.from(it) == month }
+        loadCalendar(month)
+    }
+
+    override fun selectDate(date: LocalDate) {
+        state.selectedDate = if (state.selectedDate == date) null else date
+    }
+
+    /** 只读服务端日历。晚回来的旧请求不覆盖新结果（同 [openReport] 的做法）。 */
+    private fun loadCalendar(month: YearMonth) {
+        val attempt = ++calendarAttempt
+        val token = TokenStore.load(prefs)
+        state.calendarDays = emptyMap()
+        state.calendarTruncated = false
+        state.calendarLoadedMonth = null
+        if (token == null) {
+            state.calendarLoading = false
+            state.calendarError = "保存推送令牌后才能读取日历。"
+            return
+        }
+        state.calendarLoading = true
+        state.calendarError = null
+        lifecycleScope.launch {
+            val result = runCatching { fetchCalendar(token, month) }
+            if (attempt != calendarAttempt) return@launch
+            state.calendarLoading = false
+            result
+                .onSuccess {
+                    state.calendarDays = it.days
+                    state.calendarTruncated = it.truncated
+                    state.calendarLoadedMonth = month
+                }
+                .onFailure {
+                    state.calendarError =
+                        if (it is PushException) it.message else "读取失败：${it.javaClass.simpleName}"
+                }
+        }
     }
 
     /** 协程里的异常必须接住，否则界面停在“同步中”且没有提示。结果写进 prefs，下次打开还能看到。 */

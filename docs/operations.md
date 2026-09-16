@@ -233,6 +233,15 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 
 **FitDays 凭据**：用户决定保留 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（2026-09-15），以便需要时恢复 FitDays+ 拉取。当前没有任何入口会登录 FitDays+：`refresh_data` 已下线、`PERIODIC_SYNC=off`、推送批次不会被重排成拉取任务；只有手工向 `sync_batches` 插入 queued 任务才会触发登录（会顶掉手机）。不再需要时用 `wrangler secret delete` 删除。
 
+## 10. 手机日历
+
+手机上的“训练日历”从 `GET /app/calendar` 读数据，鉴权用的是第 9 节那个推送令牌，不需要额外配置。规则见 DATA_CONTRACT 第 9 节。
+
+- 日期下的小字是当天各训练会话 `calories_kcal` 之和。这个值由模型在 `finalize_workout_session` 时写入（用户把手表截图给模型，模型填 `calories_kcal`），手表数据不经过 Health Connect；没填就没有小字。
+- 上线顺序：先 `npx wrangler d1 migrations apply kinetrail --remote`（`0002_session_calories.sql` 加 `workout_sessions.calories_kcal`），再 `npx wrangler deploy`，最后装 0.4.0 的 APK。旧 Worker 会让日历页报 404，旧 APK 不受新字段影响。
+- 令牌泄漏的处置不变，但影响范围更大了：这个令牌现在既能写 HC 体重，也能读出全部体测与训练事实。按第 6 节轮换后，手机上要重新保存令牌。
+- 排查：Observability 里筛 `event:"calendar"`，只有 `status`、`count`、`duration_ms`、错误码，不记日期、数值和令牌。
+
 ## 验证记录
 
 | 日期 | 范围 | 结论 |

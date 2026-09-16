@@ -529,6 +529,18 @@
             }
           ]
         },
+        "calories_kcal": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "notes": {
           "anyOf": [
             {
@@ -554,6 +566,7 @@
         "duration_seconds",
         "duration_source",
         "overall_rpe",
+        "calories_kcal",
         "notes"
       ],
       "additionalProperties": false
@@ -3473,6 +3486,11 @@
             "type": "number",
             "minimum": 0,
             "maximum": 10
+          },
+          "calories_kcal": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 20000
           },
           "notes": {
             "type": "string",

@@ -5,6 +5,8 @@
 - **FitDays 体测**：只读同步到 Kinetrail 镜像，无损保留原始测量字段（含未知字段与数字原文），账户秘密不落库。
 - **训练事实**：只记录用户明确报告已完成的训练，逐组/有氧数据、原话、版本化纠错、幂等收据，不物理删除。
 
+手机端 `android/`（“身迹同步”）把体测从 Health Connect 推上来，并提供一个日历界面：日期下的小字是手表记录的当天消耗，点开看当天的逐组训练和体脂秤读数。
+
 ## 当前状态（2026-09-14）
 
 | 范围 | 状态 |
@@ -45,7 +47,9 @@ src/
   auth.ts          Access OIDC 本人绑定、consent、JWT 验签
   mcp.ts           无状态 Streamable HTTP（JSON-RPC）、工具注册、scope、限流、信封、输出检查
   schemas.ts       MCP 契约 schema（与 research/mcp-schemas.json 逐项一致）
-  tools.ts         19 个工具的中文标题、描述与处理函数
+  tools.ts         18 个工具的中文标题、描述与处理函数
+  ingest.ts        Health Connect 推送入口：设备令牌、严格校验、合并与识图报告
+  calendar.ts      手机日历的只读入口（GET /app/calendar），与推送共用设备令牌
   fitdays.ts       FitDays 只读适配：固定路由、manual redirect、预算、原文捕获
   sanitize.ts      秘密边界：采集阻断/脱敏与输出二次检查
   measurements.ts  测量解析、版本、分块、暂存与原子发布

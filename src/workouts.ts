@@ -96,6 +96,7 @@ interface SessionRow {
   duration_seconds: number | null
   duration_source: 'user_reported' | 'timestamps' | 'unknown'
   overall_rpe: number | null
+  calories_kcal: number | null
   notes: string | null
   last_activity_ms: number
   created_at: number
@@ -740,6 +741,7 @@ interface FinalizeArgs extends WriteBase {
   ended_at: string
   duration_seconds?: number
   overall_rpe?: number
+  calories_kcal?: number
   notes?: string
 }
 
@@ -786,7 +788,7 @@ export async function finalizeWorkoutSession(args: FinalizeArgs, ctx: ToolContex
           db
             .prepare(
               `UPDATE workout_sessions SET status = 'finalized', revision = revision + 1, ended_at = ?, ended_at_ms = ?,
-               duration_seconds = ?, duration_source = ?, overall_rpe = ?, notes = ?, updated_at = ?
+               duration_seconds = ?, duration_source = ?, overall_rpe = ?, calories_kcal = ?, notes = ?, updated_at = ?
              WHERE id = ? AND owner_id = ? AND revision = ?`,
             )
             .bind(
@@ -795,6 +797,7 @@ export async function finalizeWorkoutSession(args: FinalizeArgs, ctx: ToolContex
               duration,
               durationSource,
               args.overall_rpe ?? null,
+              args.calories_kcal ?? null,
               args.notes ?? null,
               nowMs,
               session.id,
@@ -815,6 +818,7 @@ export async function finalizeWorkoutSession(args: FinalizeArgs, ctx: ToolContex
               duration_seconds: duration,
               duration_source: durationSource,
               overall_rpe: args.overall_rpe ?? null,
+              calories_kcal: args.calories_kcal ?? null,
               notes: args.notes ?? null,
             },
             key: args.idempotency_key,
@@ -1006,6 +1010,7 @@ function toSession(row: SessionRow, selectionRequired: boolean) {
     duration_seconds: row.duration_seconds,
     duration_source: row.duration_source,
     overall_rpe: row.overall_rpe,
+    calories_kcal: row.calories_kcal,
     notes: row.notes,
   }
 }

@@ -3,9 +3,12 @@ package click.erikaalk.kinetrail.hc.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import click.erikaalk.kinetrail.hc.calendar.CalendarDay
 import click.erikaalk.kinetrail.hc.report.ParseResult
+import java.time.LocalDate
+import java.time.YearMonth
 
-enum class Screen { Home, Report, Token }
+enum class Screen { Home, Calendar, Report, Token }
 
 sealed interface ReportState {
     data object Recognizing : ReportState
@@ -35,11 +38,24 @@ class AppState {
 
     var report by mutableStateOf<ReportState>(ReportState.Recognizing)
     var upload by mutableStateOf<UploadState>(UploadState.Idle)
+
+    /** 日历：一次显示一个月，数据来自服务端，与 Health Connect 同步互不影响。 */
+    var month by mutableStateOf<YearMonth>(YearMonth.now())
+    var selectedDate by mutableStateOf<LocalDate?>(null)
+    var calendarDays by mutableStateOf<Map<LocalDate, CalendarDay>>(emptyMap())
+    /** 已经取回来的是哪个月；为 null 表示当前这个月还没有可用数据。 */
+    var calendarLoadedMonth by mutableStateOf<YearMonth?>(null)
+    var calendarLoading by mutableStateOf(false)
+    var calendarError by mutableStateOf<String?>(null)
+    var calendarTruncated by mutableStateOf(false)
 }
 
 /** 界面发给 Activity 的动作。 */
 interface AppActions {
     fun sync()
+    fun openCalendar()
+    fun showMonth(month: YearMonth)
+    fun selectDate(date: LocalDate)
     fun requestPermissions()
     fun pickReport()
     fun uploadReport()

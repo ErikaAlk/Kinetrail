@@ -125,7 +125,7 @@ export const TOOLS: ToolDefinition[] = [
     name: 'finalize_workout_session',
     title: '结束训练会话',
     description:
-      '用户明确说练完或结束时结束会话，可附用户报告的总时长、整体 RPE 和备注。结束后继续记录需要 reopen_workout_session 或新会话。',
+      '用户明确说练完或结束时结束会话，可附用户报告的总时长、整体 RPE、手表记录的整场消耗热量和备注。手表汇总里的消耗填 calories_kcal（kcal，手机日历按自然日汇总它），不要只写进备注。结束后继续记录需要 reopen_workout_session 或新会话。',
     handler: finalizeWorkoutSession,
   },
   {

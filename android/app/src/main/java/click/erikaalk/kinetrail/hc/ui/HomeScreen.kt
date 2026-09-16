@@ -37,6 +37,22 @@ fun HomeScreen(state: AppState, actions: AppActions, insets: PageInsets) {
         PageTitle(text = "身迹同步", onTitleBounds = insets.onTitleBounds)
 
         SettingsSection(
+            title = "记录",
+            hasIcons = true,
+            footer = "日期下的小字是手表记录的当天消耗，随训练一起写入 Kinetrail。",
+            rows = listOf(
+                {
+                    SettingRow(
+                        title = "训练日历",
+                        icon = R.drawable.ic_calendar_days,
+                        chevron = true,
+                        onClick = actions::openCalendar,
+                    )
+                },
+            ),
+        )
+
+        SettingsSection(
             title = "体测同步",
             hasIcons = true,
             footer = when {
