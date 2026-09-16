@@ -82,15 +82,40 @@ private val TIME = Regex("(\\d{4})/(\\d{2})/(\\d{2})(\\d{2}):(\\d{2})")
 
 private val SEGMENT_HEADERS = listOf("右臂", "左臂", "躯干", "右腿", "左腿")
 
+/**
+ * 报告上的小数位是固定的：FitDays+ 打印读数的 `ICERUnitConfig.o()` 先把值乘 10 取整，再在末位前插小数点，
+ * 所以质量、比例、阻抗都是一位小数，只有表里的体重是两位。没有小数点就是被 OCR 读丢了
+ * （真机实测「157.7%」读成「1577%」、「47.9」读成「479」），按固定位数还原。
+ * 只用在确知位数的字段上；内脏脂肪等级、基础代谢率、身体年龄这些本来就是整数，不还原。
+ */
+private fun restoreDecimal(text: String, decimals: Int = 1): Double {
+    val value = text.toDouble()
+    if ('.' in text || decimals == 0) return value
+    var scale = 1.0
+    repeat(decimals) { scale *= 10 }
+    return value / scale
+}
+
 // ML Kit 在报告衬线字体上读错的形近字（模拟器实测 2026-09-15）：体→休、控→挖、肉→內、衡→衝。
 // 「肉」还会读成「内」（肌内型），但「内脏」是真的「内」，不能全局换回，交给下面的一字容错。
 private val LOOKALIKES = mapOf('休' to '体', '挖' to '控', '內' to '肉', '衝' to '衡')
 
-/** 标签比较：先换回形近字；四个字以上的标签再容忍一个字读错（同一分区里的标签彼此至少差两个字）。 */
+/**
+ * 标签比较：先换回形近字；四个字以上的标签再容忍一处读错、多认或少认一个字
+ * （真机实测把「肌肉均衡」读成「肌肉內均衡」、「生物电阻抗」读成「生物电阻坑」）。
+ * 同一分区里的标签彼此至少差两处，所以这点容忍不会把两个标签认混。
+ */
 private fun sameLabel(text: String, label: String): Boolean {
     val t = String(CharArray(text.length) { LOOKALIKES[text[it]] ?: text[it] })
     if (t == label) return true
-    return label.length >= 4 && t.length == label.length && t.indices.count { t[it] != label[it] } <= 1
+    if (label.length < 4 || abs(t.length - label.length) > 1) return false
+    if (t.length == label.length) return t.indices.count { t[it] != label[it] } <= 1
+    val short = if (t.length < label.length) t else label
+    val long = if (t.length < label.length) label else t
+    var i = 0
+    while (i < short.length && short[i] == long[i]) i++
+    // 跳过多出来的那个字，剩下的必须完全一致
+    return short.substring(i) == long.substring(i + 1)
 }
 
 object ReportParser {
@@ -128,13 +153,13 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
         return rest + right.joinToString(" ") { it.norm }
     }
 
-    /** 找行名（可带别名），要求这一行右侧确实有数字，避免撞上同名的分区标题。 */
-    private fun row(pool: List<OcrLine>, vararg names: String, signed: Boolean = false): List<Double>? {
+    /** 找行名（可带别名），返回这一行右侧的数字原文；要求确实有数字，避免撞上同名的分区标题。 */
+    private fun row(pool: List<OcrLine>, vararg names: String, signed: Boolean = false): List<String>? {
         for (line in pool.sortedBy { it.top }) {
             val name = names.firstOrNull { n ->
                 sameLabel(line.norm, n) || (line.norm.startsWith(n) && line.norm.getOrNull(n.length)?.let { it.isDigit() || it == '-' || it == '(' } == true)
             } ?: continue
-            val numbers = (if (signed) SIGNED else NUMBER).findAll(rowText(line, name, pool)).map { it.value.toDouble() }.toList()
+            val numbers = (if (signed) SIGNED else NUMBER).findAll(rowText(line, name, pool)).map { it.value }.toList()
             if (numbers.isNotEmpty()) return numbers
         }
         return null
@@ -161,29 +186,33 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
         val time = match(TIME)?.destructured?.let { (y, mo, d, h, mi) ->
             runCatching { LocalDateTime.of(y.toInt(), mo.toInt(), d.toInt(), h.toInt(), mi.toInt()) }.getOrNull()
         } ?: missing("检测时间")
-        val age = match(Regex("年龄:?(\\d{1,3})(?![\\d.])"))?.groupValues?.get(1)?.toInt() ?: missing("年龄")
+        // 真机实测读成繁体「年齡」，冒号也可能读丢或读成别的符号
+        val age = match(Regex("年[龄齡][^\\d]{0,2}(\\d{1,3})(?![\\d.])"))?.groupValues?.get(1)?.toInt()
+            ?: missing("年龄")
         val height = match(Regex("身高:?(\\d{2,3}(?:\\.\\d)?)cm", RegexOption.IGNORE_CASE))
             ?.groupValues?.get(1)?.toDouble() ?: missing("身高")
 
         // 身体成分分析：测量(kg) (范围) | 重量比例(%) | 评估
         val compPool = region(left, composition.bottom, muscleFat.top)
-        fun measured(label: String, vararg names: String): Pair<Measured, Double>? {
+        fun measured(label: String, valueDecimals: Int, vararg names: String): Pair<Measured, Double>? {
             val n = row(compPool, *names) ?: return missing(label)
             if (n.size < 4) return missing("${label}的全部读数")
-            return Measured(n[0], n[1], n[2]) to n[3]
+            // 范围与比例都是一位小数，只有体重那一格是两位
+            return Measured(restoreDecimal(n[0], valueDecimals), restoreDecimal(n[1]), restoreDecimal(n[2])) to
+                restoreDecimal(n[3])
         }
-        val weight = measured("体重", "体重")
-        val fat = measured("体脂", "体脂", "体脂肪")
-        val bone = measured("骨重量", "骨重量", "骨量")
-        val protein = measured("蛋白质", "蛋白质")
-        val water = measured("身体水份", "身体水份", "身体水分")
-        val muscle = measured("肌肉", "肌肉")
-        val skeletal = measured("骨骼肌率", "骨骼肌率", "骨骼肌")
+        val weight = measured("体重", 2, "体重")
+        val fat = measured("体脂", 1, "体脂", "体脂肪")
+        val bone = measured("骨重量", 1, "骨重量", "骨量")
+        val protein = measured("蛋白质", 1, "蛋白质")
+        val water = measured("身体水份", 1, "身体水份", "身体水分")
+        val muscle = measured("肌肉", 1, "肌肉")
+        val skeletal = measured("骨骼肌率", 1, "骨骼肌率", "骨骼肌")
 
-        // 身体得分：这一区最高的一行，大号斜体数字接「/100分」。实测会整行读成「77n00」，所以只认开头的数字
+        // 身体得分：这一区最高的一行，大号斜体数字接「/100分」。实测整行会读成「77n00」「781o0分」，所以只认开头的数字
         val scorePool = region(right, score.bottom, controlHeader?.top ?: obesityHeader?.top ?: pageBottom)
         val bodyScore = scorePool.maxByOrNull { it.height }
-            ?.let { Regex("^(\\d{1,3})(?:\\D{1,2}1?00分?)?$").find(it.norm) }
+            ?.let { Regex("^(\\d{1,3}?)(?:\\D?1?[o0O]{2}分?)?$").find(it.norm) }
             ?.groupValues?.get(1)?.toDouble()
             ?: missing("身体得分")
 
@@ -192,7 +221,7 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
         } else {
             emptyList()
         }
-        fun control(label: String) = row(controlPool, label, signed = true)?.first() ?: missing(label)
+        fun control(label: String) = row(controlPool, label, signed = true)?.first()?.let { restoreDecimal(it) } ?: missing(label)
         val target = control("目标体重")
         val weightControl = control("体重控制")
         val fatControl = control("脂肪控制")
@@ -208,7 +237,7 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
         val fatRateLabel = obesityPool.firstOrNull { sameLabel(it.norm, "体脂率") }
         val bmi = if (bmiLabel != null && fatRateLabel != null) {
             obesityPool.filter { it.cy > bmiLabel.bottom && it.cy < fatRateLabel.top && PURE_NUMBER.matches(it.norm) }
-                .minByOrNull { it.top }?.norm?.toDouble()
+                .minByOrNull { it.top }?.norm?.let { restoreDecimal(it) }
         } else {
             null
         } ?: missing("BMI")
@@ -216,14 +245,16 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
             ?: missing("肥胖度")
 
         val otherPool = region(right, otherHeader.bottom, pageBottom)
-        fun other(label: String, vararg names: String) = row(otherPool, *names)?.first() ?: missing(label)
-        val visceral = other("内脏脂肪等级", "内脏脂肪等级")
-        val bmr = other("基础代谢率", "基础代谢率")
-        val fatFree = other("去脂体重", "去脂体重")
-        val subcutaneous = other("皮下脂肪", "皮下脂肪")
-        val smi = other("SMI", "SMI")
-        val bodyAge = other("身体年龄", "身体年龄")
-        val whr = other("腰臀比", "腰臀比")
+        fun other(label: String, decimals: Int, vararg names: String) =
+            row(otherPool, *names)?.first()?.let { restoreDecimal(it, decimals) } ?: missing(label)
+        // 内脏脂肪等级、基础代谢率、身体年龄在报告上就是整数，其余是一位小数
+        val visceral = other("内脏脂肪等级", 0, "内脏脂肪等级")
+        val bmr = other("基础代谢率", 0, "基础代谢率")
+        val fatFree = other("去脂体重", 1, "去脂体重")
+        val subcutaneous = other("皮下脂肪", 1, "皮下脂肪")
+        val smi = other("SMI", 1, "SMI")
+        val bodyAge = other("身体年龄", 0, "身体年龄")
+        val whr = other("腰臀比", 1, "腰臀比")
 
         // 分段：两块左右并排，下沿到「生物电阻抗」；「标准范围」说明行及其以下不参与
         val impedanceHeader = header("生物电阻抗")
@@ -261,8 +292,8 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
     private fun segments(label: String, pool: List<OcrLine>): Segments<SegmentValue>? {
         val cut = pool.filter { it.norm.startsWith("标准范围") }.minOfOrNull { it.top } ?: Float.MAX_VALUE
         val usable = pool.filter { it.bottom <= cut }
-        val kg = arrange(usable.mapNotNull { l -> KG_VALUE.find(l.norm)?.let { l to it.groupValues[1].toDouble() } })
-        val pct = arrange(usable.mapNotNull { l -> PCT_VALUE.find(l.norm)?.let { l to it.groupValues[1].toDouble() } })
+        val kg = arrange(usable.mapNotNull { l -> KG_VALUE.find(l.norm)?.let { l to restoreDecimal(it.groupValues[1]) } })
+        val pct = arrange(usable.mapNotNull { l -> PCT_VALUE.find(l.norm)?.let { l to restoreDecimal(it.groupValues[1]) } })
         if (kg == null || pct == null) return missing("${label}的五个部位")
         return Segments(
             SegmentValue(kg[0], pct[0]), SegmentValue(kg[1], pct[1]), SegmentValue(kg[2], pct[2]),
@@ -296,7 +327,7 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
             // 按离哪一列表头最近归列；列序即 SEGMENT_HEADERS：右臂、左臂、躯干、右腿、左腿
             val byColumn = cells.groupBy { cell -> columns.indices.minBy { abs(columns[it].cx - cell.cx) } }
             if (byColumn.size != 5 || byColumn.values.any { it.size != 1 }) return missing("${khz}kHz 阻抗的五个部位")
-            fun v(column: Int) = byColumn.getValue(column).single().norm.toDouble()
+            fun v(column: Int) = restoreDecimal(byColumn.getValue(column).single().norm)
             out[khz] = Segments(leftArm = v(1), rightArm = v(0), trunk = v(2), leftLeg = v(4), rightLeg = v(3))
         }
         if (20 !in out || 100 !in out) return missing("20kHz 与 100kHz 阻抗")
