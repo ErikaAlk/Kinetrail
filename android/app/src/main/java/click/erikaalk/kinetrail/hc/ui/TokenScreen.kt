@@ -34,7 +34,7 @@ fun TokenScreen(actions: AppActions, insets: PageInsets) {
             .verticalScroll(rememberScrollState())
             .padding(top = insets.top, bottom = insets.bottom),
     ) {
-        PageTitle(text = "推送令牌", onTitleBounds = insets.onTitleBounds)
+        PageTitle(text = Screen.Token.title, onTitleBounds = insets.onTitleBounds)
         OutlinedTextField(
             value = token,
             onValueChange = { token = it.trim(); error = null },

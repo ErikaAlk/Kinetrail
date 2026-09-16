@@ -7,7 +7,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import click.erikaalk.kinetrail.hc.BuildConfig
 import click.erikaalk.kinetrail.hc.R
 import click.erikaalk.kinetrail.hc.designsystem.KtSpacing
 import click.erikaalk.kinetrail.hc.designsystem.component.BannerTone
@@ -21,11 +20,12 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * 首页：同步是主任务，报告识别是第二个入口，令牌放最后。每组一个标题，行只有图标、标题和右侧读数。
- * 同步失败的原因放在组下方的提示条里，成功只在行内给一句结果。
+ * 同步页：把体测推上去的两件事都在这里——Health Connect 里的称重，和报告图片补的读数。
+ * 每组一个标题，行只有图标、标题和右侧读数。同步失败的原因放在组下方的提示条里，
+ * 成功只在行内给一句结果。
  */
 @Composable
-fun HomeScreen(state: AppState, actions: AppActions, insets: PageInsets) {
+fun SyncScreen(state: AppState, actions: AppActions, insets: PageInsets) {
     val granted = state.grantedPermissions
     val permissionsComplete = granted != null && granted == state.totalPermissions
     Column(
@@ -34,26 +34,10 @@ fun HomeScreen(state: AppState, actions: AppActions, insets: PageInsets) {
             .verticalScroll(rememberScrollState())
             .padding(top = insets.top, bottom = insets.bottom),
     ) {
-        PageTitle(text = "身迹同步", onTitleBounds = insets.onTitleBounds)
+        PageTitle(text = Screen.Sync.title, onTitleBounds = insets.onTitleBounds)
 
         SettingsSection(
-            title = "记录",
-            hasIcons = true,
-            footer = "日期下的小字是手表记录的当天消耗，随训练一起写入 Kinetrail。",
-            rows = listOf(
-                {
-                    SettingRow(
-                        title = "训练日历",
-                        icon = R.drawable.ic_calendar_days,
-                        chevron = true,
-                        onClick = actions::openCalendar,
-                    )
-                },
-            ),
-        )
-
-        SettingsSection(
-            title = "体测同步",
+            title = "Health Connect",
             hasIcons = true,
             footer = when {
                 granted == null -> null
@@ -73,7 +57,7 @@ fun HomeScreen(state: AppState, actions: AppActions, insets: PageInsets) {
                 },
                 {
                     SettingRow(
-                        title = "Health Connect 权限",
+                        title = "读取权限",
                         icon = R.drawable.ic_activity,
                         value = when {
                             granted == null -> "不可用"
@@ -101,7 +85,7 @@ fun HomeScreen(state: AppState, actions: AppActions, insets: PageInsets) {
         SettingsSection(
             title = "体测报告",
             hasIcons = true,
-            footer = "也可以在 FitDays+ 的报告页点分享，选身迹同步。",
+            footer = "也可以在 FitDays+ 的报告页点分享，选身迹。",
             rows = listOf(
                 {
                     SettingRow(
@@ -111,23 +95,6 @@ fun HomeScreen(state: AppState, actions: AppActions, insets: PageInsets) {
                         onClick = actions::pickReport,
                     )
                 },
-            ),
-        )
-
-        SettingsSection(
-            title = "设置",
-            hasIcons = true,
-            rows = listOf(
-                {
-                    SettingRow(
-                        title = "推送令牌",
-                        icon = R.drawable.ic_key_round,
-                        value = if (state.tokenSaved) "已保存" else "未设置",
-                        chevron = true,
-                        onClick = { actions.navigate(Screen.Token) },
-                    )
-                },
-                { SettingRow(title = "版本", value = BuildConfig.VERSION_NAME) },
             ),
         )
     }

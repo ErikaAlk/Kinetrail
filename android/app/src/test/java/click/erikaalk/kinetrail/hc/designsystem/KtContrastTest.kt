@@ -58,22 +58,39 @@ class KtColorContrastTest {
     }
 }
 
-/** 顶栏材质上的标题与返回图标按最终合成背景验收：材质压在页面里可能出现的每种面上（含主按钮）。 */
+/** 材质上的文字与图标按最终合成背景验收：材质压在页面里可能出现的每种面上（含主按钮）。 */
 class KtMaterialContrastTest {
+
+    private fun KtColors.backdrops() = listOf(
+        canvas, surface, surfaceSunken, fill.control, accent.subtle, accent.primary,
+        semantic.error.subtle, semantic.warning.subtle, semantic.success.subtle,
+    )
 
     @Test
     fun `顶栏材质上的标题和图标在各种背景上可读`() = palettes.forEach { (mode, c) ->
-        val backdrops = listOf(
-            c.canvas, c.surface, c.fill.control, c.accent.subtle, c.accent.primary,
-            c.semantic.error.subtle, c.semantic.warning.subtle, c.semantic.success.subtle,
-        )
         listOf(true, false).forEach { blurred ->
             val alpha = KtMaterial.headerAlpha(c.isDark, blurred).toDouble()
-            backdrops.forEach { backdrop ->
+            c.backdrops().forEach { backdrop ->
                 val bg = ColorContrast.blend(c.surfaceElevated.toArgb(), backdrop.toArgb(), alpha)
                 assertAtLeast(4.5, c.text.primary.toArgb(), bg, "$mode 顶栏（blurred=$blurred）标题")
                 // 顶栏上除标题外只有返回图标，按非文本对比度 3:1 验收（深色下主按钮滚到条后面时最低 3.44:1）
                 assertAtLeast(3.0, c.text.secondary.toArgb(), bg, "$mode 顶栏（blurred=$blurred）返回图标")
+            }
+        }
+    }
+
+    /**
+     * 底栏的标签是 `caption`，按 4.5:1 验收，**不能按图标那档 3:1 放过**。
+     * 这一条就是 [KtMaterial.NAV_LIGHT_ALPHA] 收到 0.86 / 0.80 的原因。
+     */
+    @Test
+    fun `底栏材质上的选中与未选中标签在各种背景上可读`() = palettes.forEach { (mode, c) ->
+        listOf(true, false).forEach { blurred ->
+            val alpha = KtMaterial.navAlpha(c.isDark, blurred).toDouble()
+            c.backdrops().forEach { backdrop ->
+                val bg = ColorContrast.blend(c.surfaceElevated.toArgb(), backdrop.toArgb(), alpha)
+                assertAtLeast(4.5, c.accent.text.toArgb(), bg, "$mode 底栏（blurred=$blurred）选中标签")
+                assertAtLeast(4.5, c.text.secondary.toArgb(), bg, "$mode 底栏（blurred=$blurred）未选中标签")
             }
         }
     }
