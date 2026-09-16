@@ -132,19 +132,70 @@ class ReportParserTest {
     @Test
     fun `行名和读数合成一行也能读`() = assertReal(ReportParser.parse(fixture(merged = true), 1410f))
 
+    /** 调试版导出的 files/last-ocr.json（`{"width":…,"lines":[{"text":…,"box":[l,t,r,b]}]}`）。 */
+    private fun dump(name: String): Pair<List<OcrLine>, Float> {
+        val q = '"'
+        val text = javaClass.getResource("/$name")!!.readText()
+        val width = text.substringAfter("${q}width$q:").substringBefore(",").toFloat()
+        val lines = text.split("{${q}text$q:$q").drop(1).map { chunk ->
+            val head = "$q,${q}box$q:["
+            val box = chunk.substringAfter(head).substringBefore("]").split(",").map { it.trim().toFloat() }
+            OcrLine(chunk.substringBefore(head), box[0], box[1], box[2], box[3])
+        }
+        return lines to width
+    }
+
     /**
      * 真实 ML Kit 输出：tools/report-replica.py 画的近似报告在模拟器上识别后由调试版导出（不是 FitDays+ 原图）。
      * 里面有实测的读错：「身休得分」「体重挖制」「目标休重」「肌內均衝」、行首「|」、「77/100分」读成「77n00」、「100.2°%」。
      */
     @Test
     fun `模拟器上 ML Kit 的真实识别结果（含形近字与符号读错）`() {
-        val text = javaClass.getResource("/mlkit-replica-ocr.json")!!.readText()
-        val lines = Regex("""\{"text":"((?:[^"\\]|\\.)*)","box":\[(\d+),(\d+),(\d+),(\d+)]}""").findAll(text).map { m ->
-            val (t, l, top, r, b) = m.destructured
-            OcrLine(t.replace("\\\"", "\"").replace("\\\\", "\\"), l.toFloat(), top.toFloat(), r.toFloat(), b.toFloat())
-        }.toList()
+        val (lines, width) = dump("mlkit-replica-ocr.json")
         assertEquals(204, lines.size)
-        assertReal(ReportParser.parse(lines, 1410f))
+        assertReal(ReportParser.parse(lines, width))
+    }
+
+    /**
+     * 真机（一加 13 / ColorOS）上识别 FitDays+ 分享出来的真实报告（2480×3508），调试版导出后只把 ID 换成测试值。
+     * 实测读错：「年齡」繁体、「身体咸分分析」、「78/100分」读成「781o0分」、分段的「157.7%」丢了小数点读成「1577%」。
+     */
+    @Test
+    fun `真机上 FitDays+ 原图的识别结果`() {
+        val (lines, width) = dump("mlkit-real-report-ocr.json")
+        assertEquals(245, lines.size)
+        val result = ReportParser.parse(lines, width)
+        assertEquals(emptyList(), result.problems)
+        val r = assertNotNull(result.report)
+        assertEquals(LocalDateTime.of(2026, 9, 16, 9, 13), r.measuredAt)
+        assertEquals(19, r.age)
+        assertEquals(164.0, r.heightCm)
+        assertEquals(78.0, r.bodyScore)
+        assertEquals(Measured(63.35, 50.3, 68.0), r.weight)
+        assertEquals(Measured(12.0, 7.1, 14.2), r.bodyFat)
+        assertEquals(18.9, r.bodyFatPct)
+        assertEquals(Measured(3.4, 2.9, 3.6), r.boneMass)
+        assertEquals(Measured(10.3, 8.6, 10.8), r.protein)
+        assertEquals(Measured(37.6, 31.6, 39.4), r.bodyWater)
+        assertEquals(Measured(47.9, 40.3, 50.2), r.muscle)
+        assertEquals(Measured(28.8, 25.1, 30.7), r.skeletalMuscle)
+        assertEquals(listOf(5.4, 16.2, 59.4, 75.6, 45.4), listOf(r.boneMassPct, r.proteinPct, r.bodyWaterPct, r.musclePct, r.skeletalMusclePct))
+        assertEquals(23.6, r.bmi)
+        assertEquals(107.0, r.obesityDegreePct)
+        assertEquals(listOf(60.3, -3.0, -3.0, 0.0), listOf(r.targetWeight, r.weightControl, r.fatControl, r.muscleControl))
+        assertEquals(listOf(4.0, 1479.0, 51.3, 13.5, 8.2, 17.0, 0.8), listOf(r.visceralFat, r.bmr, r.fatFreeMass, r.subcutaneousFatPct, r.smi, r.bodyAge, r.whr))
+        assertEquals(SegmentValue(0.6, 102.2), r.segmentFat?.leftArm)
+        assertEquals(SegmentValue(0.5, 94.7), r.segmentFat?.rightArm)
+        // 报告上是 157.7%，OCR 丢了小数点读成「1577%」
+        assertEquals(SegmentValue(5.9, 157.7), r.segmentFat?.trunk)
+        assertEquals(SegmentValue(1.9, 130.6), r.segmentFat?.leftLeg)
+        assertEquals(SegmentValue(1.9, 130.4), r.segmentFat?.rightLeg)
+        assertEquals(SegmentValue(2.8, 101.2), r.segmentMuscle?.leftArm)
+        assertEquals(SegmentValue(22.3, 100.1), r.segmentMuscle?.trunk)
+        assertEquals(SegmentValue(8.3, 106.1), r.segmentMuscle?.rightLeg)
+        assertEquals(Segments(336.5, 318.9, 21.7, 290.9, 271.5), r.impedance?.get(20))
+        assertEquals(Segments(295.6, 276.3, 19.1, 248.9, 230.5), r.impedance?.get(100))
+        assertTrue(result.uploadable)
     }
 
     @Test
@@ -154,10 +205,19 @@ class ReportParserTest {
     }
 
     @Test
-    fun `小数点读丢时交叉校验拦下，不许上传`() {
+    fun `小数点读丢按固定位数还原`() {
+        // 报告里的质量固定一位小数，「123」只可能是 12.3，还原后交叉校验照常通过
         val result = ReportParser.parse(fixture(fatValue = "123 (7.1-14.2)"), 1410f)
+        assertEquals(emptyList(), result.problems)
+        assertEquals(12.3, assertNotNull(result.report).bodyFat.value)
+    }
+
+    @Test
+    fun `数字本身读错时交叉校验拦下，不许上传`() {
+        // 还原不了的那类错：位数没问题、数值错了，只能靠报告内部的算术关系发现
+        val result = ReportParser.parse(fixture(fatValue = "13.3 (7.1-14.2)"), 1410f)
         assertFalse(result.uploadable)
-        assertTrue(result.problems.any { it.startsWith("体脂 123 kg") }, result.problems.toString())
+        assertTrue(result.problems.any { it.startsWith("体脂 13.3 kg") }, result.problems.toString())
         assertTrue(result.problems.any { it.startsWith("去脂体重") }, result.problems.toString())
     }
 
