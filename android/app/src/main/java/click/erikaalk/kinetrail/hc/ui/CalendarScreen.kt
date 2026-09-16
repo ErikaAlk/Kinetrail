@@ -194,7 +194,7 @@ private fun DayCell(
     Box(
         Modifier
             .fillMaxWidth()
-            .aspectRatio(0.85f)
+            .aspectRatio(1f)
             .padding(2.dp)
             .clip(KtRadius.mediumShape)
             .background(if (selected) colors.accent.primary else Color.Transparent)
@@ -288,7 +288,10 @@ private fun DayDetail(date: LocalDate, day: CalendarDay?) {
 @Composable
 private fun SessionBody(session: TrainingSession) {
     val colors = ktColors
-    val span = listOfNotNull(session.startedAt?.format(TIME), session.endedAt?.format(TIME)).joinToString("–")
+    // 补记的训练开始和结束是同一时刻，那样显示成「16:56–16:56」像坏了，只给一个时间。
+    val span = listOfNotNull(session.startedAt?.format(TIME), session.endedAt?.format(TIME))
+        .distinct()
+        .joinToString("–")
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(span.ifEmpty { "训练" }, style = KtType.body, color = colors.text.primary, modifier = Modifier.weight(1f))
         if (session.status == "open") {

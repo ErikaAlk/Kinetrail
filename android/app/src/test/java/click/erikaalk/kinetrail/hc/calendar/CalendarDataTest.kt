@@ -87,6 +87,10 @@ class CalendarDataTest {
             TrainingSet(loadValue = 50.0, loadUnit = "kg"),
         )
         assertEquals("45 kg × 12、12；50 kg × 8；50 kg", describeSets(mixed))
+
+        // 只有次数（负重单位不明）时合并成一段
+        val repsOnly = List(4) { TrainingSet(reps = 12) }
+        assertEquals("12、12、12、12 次", describeSets(repsOnly))
         assertEquals("1 组", describeSets(listOf(TrainingSet())))
         assertEquals("", describeSets(emptyList()))
     }

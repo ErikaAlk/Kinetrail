@@ -170,6 +170,21 @@ fun describeSets(sets: List<TrainingSet>): String {
             i = j
             continue
         }
+        // 只报了次数（负重单位不明或自重）：同样合并成一段，不要写成「12 次；12 次；12 次」。
+        if (load == null && reps != null && set.durationSeconds == null && set.distanceValue == null) {
+            val group = mutableListOf(reps)
+            var j = i + 1
+            while (j < sets.size && sets[j].run {
+                    loadValue == null && reps != null && durationSeconds == null && distanceValue == null
+                }
+            ) {
+                group.add(sets[j].reps!!)
+                j++
+            }
+            parts.add("${group.joinToString("、")} 次")
+            i = j
+            continue
+        }
         val pieces = listOfNotNull(
             load,
             reps?.let { "$it 次" },
