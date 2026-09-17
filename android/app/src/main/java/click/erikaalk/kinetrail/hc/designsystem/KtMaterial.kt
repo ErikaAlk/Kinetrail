@@ -53,10 +53,11 @@ object KtMaterial {
      * 底栏底下会经过 `accent.primary` 的填充块（日历里选中的日期格、详情页的主按钮），
      * 0.48 那一档未选中标签只剩 2.63:1（浅）/ 2.29:1（深），过不了 caption 的 4.5:1。
      * 收到 0.86 / 0.80 之后最差档回到 4.69:1 / 4.77:1，由 [KtMaterialContrastTest] 钉住。
+     * 深色卡片提亮时 `surfaceElevated` 跟着变亮，合成色压在主按钮上又掉到 4.0:1，深色也收到 0.86。
      * 想更通透只能先换掉"强色填充可以滚到条底下"这件事，不能直接减材质。
      */
     const val NAV_LIGHT_ALPHA = 0.86f
-    const val NAV_DARK_ALPHA = 0.80f
+    const val NAV_DARK_ALPHA = 0.86f
 
     /** 镜面描边。悬浮条的左右边在屏幕内，需要它交代边界；通栏顶栏不画。 */
     val navStrokeWidth = 0.75.dp

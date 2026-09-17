@@ -58,9 +58,10 @@ object KtTabBar {
      * 滚动容器底部要让开的高度，安全区由调用方另加。
      *
      * 条高 + 条到安全区的间距 + 一档内容余量：最后一个内容项要能整个滚到条上方，
-     * 只让开条自己的高度会让它贴在条的下缘。
+     * 只让开条自己的高度会让它贴在条的下缘。[barHeight] 传量出来的实际条高：
+     * 系统字号放大后条会比 [minHeight] 高，按定值让开会让最后一行压在条底下。
      */
-    val contentInset: Dp = minHeight + bottomGap + KtSpacing.space4
+    fun contentInset(barHeight: Dp): Dp = barHeight + bottomGap + KtSpacing.space4
 }
 
 /** 底栏上的一个一级目的地。 */
