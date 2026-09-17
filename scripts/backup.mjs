@@ -5,6 +5,7 @@
 //
 // node scripts/backup.mjs --public-key backup-public.pem --signing-key backup-signing.pem --out D:\kinetrail-backups
 //   [--database kinetrail]
+//   [--config wrangler.local.jsonc]  默认有 wrangler.local.jsonc 就用它（真实账户与资源 ID 在这份里）
 //   [--local]  从 wrangler dev 的本地库导出（恢复演练用）
 //   [--prune]  按保留策略删除旧备份：最近 30 个日备份 + 每月最后一个（保留 12 个月）
 import { execFileSync } from 'node:child_process'
@@ -20,6 +21,7 @@ import {
 } from 'node:crypto'
 import {
   closeSync,
+  existsSync,
   lstatSync,
   mkdtempSync,
   openSync,
@@ -39,6 +41,7 @@ const { values } = parseArgs({
     'signing-key': { type: 'string' },
     out: { type: 'string' },
     database: { type: 'string', default: 'kinetrail' },
+    config: { type: 'string' },
     local: { type: 'boolean', default: false },
     prune: { type: 'boolean', default: false },
   },
@@ -111,9 +114,20 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 try {
   const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
   const location = values.local ? '--local' : '--remote'
+  const config = values.config ?? (existsSync('wrangler.local.jsonc') ? 'wrangler.local.jsonc' : undefined)
   execFileSync(
     npx,
-    ['wrangler', 'd1', 'export', values.database, location, '--output', plainPath, '--skip-confirmation'],
+    [
+      'wrangler',
+      'd1',
+      'export',
+      values.database,
+      location,
+      ...(config ? ['--config', config] : []),
+      '--output',
+      plainPath,
+      '--skip-confirmation',
+    ],
     {
       stdio: ['ignore', 'ignore', 'inherit'],
       shell: process.platform === 'win32',

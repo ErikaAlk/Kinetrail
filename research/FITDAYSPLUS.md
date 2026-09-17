@@ -39,4 +39,4 @@
 - `*_delete_list` 的语义与 FitDays 的 `is_deleted` 如何对应。
 - 迁移后 suid（`users[].suid` 或等价字段）与记录 ID 是否变化：影响 `PROFILE_ALLOWLIST` 与去重（`raw_records` 按 `data_id` 识别）。
 - `sync_increments` 是否可替代分窗全量。
-- 迁移前 D1 Time Travel 书签：`00000070-00000000-000050e7-47b4260ff4c6485eb503dca7bbd6e030`（2026-09-15T04:09Z）。
+- 迁移前 D1 Time Travel 书签：2026-09-15T04:09Z（书签 ID 不进仓库，见本机 `ops.local.md`）。

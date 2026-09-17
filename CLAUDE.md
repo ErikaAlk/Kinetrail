@@ -6,6 +6,8 @@
 
 - `npm run check`：lint + typecheck + 测试（workerd）+ 秘密扫描。提交前必须全绿。
 - `npm run types`：改 `wrangler.jsonc` 后重新生成 `worker-configuration.d.ts`。
+- 仓库里的 `wrangler.jsonc` 是占位符（仓库公开）。本人实例的真实账户、域名、资源 ID、`OWNER_OIDC_SUB` 在本机 `wrangler.local.jsonc`（git 忽略），部署、迁移、`d1 execute`、`secret put` 一律加 `-c wrangler.local.jsonc`；其余标识（D1 书签等）在本机 `ops.local.md`。手机 App 的服务端地址在 `android/local.properties` 的 `kinetrail.origin`。
+- 仓库是公开的：提交里不放真实体测读数、名字、部署标识。测试和样本用合成数值（识图样本保留真实版式和读错方式，数字已替换）。
 - 契约 schema 改动：先改 `research/build-contract.py` 并运行，再同步 `src/schemas.ts`；`tests/contract.test.ts` 断言两者完全一致。
 
 ## 不变量（改动前先确认不会破坏）
@@ -18,7 +20,7 @@
 - 识图报告（`reports[]`）：手机本机 OCR，请求里只有数字；只挂到同一分钟、体重相同、恰好一组的已入库 HC 称重上，挂上后不可变；只补 HC 没有的指标，不覆盖 HC 值。不要为了“能挂上”放宽匹配（按时间就近、忽略体重），也不要把图片传到服务端识别。解析与交叉校验在 `android/.../report/ReportParser.kt`，请求 JSON 与服务端测试共用 `tests/fixtures/android-report.json`。
 - 训练写入：先查收据，再校验，再单个 D1 batch 提交（guard 表 CAS）；约束失败为 not_committed，其他批量错误且查不到收据为 unknown。V1 没有 hard delete，事实表由触发器兜底。
 - 手机日历（`src/calendar.ts`）：只读，复用推送令牌（用户 2026-09-16 批准的扩权），只读 `VISIBLE` 快照与当前生效的动作版本，不触发同步；输出不含 `raw_text`，发出前过 `findSecretPath`。响应形状由 `tests/fixtures/calendar-response.json` 钉住，服务端与 Android 单测共用，改字段要同时改两边。手表消耗热量走 `finalize_workout_session` 的 `calories_kcal`，不走 Health Connect。
-- 只存本人：`PROFILE_ALLOWLIST` 限定入库的 FitDays 成员（当前 Erika），其他成员和无 suid 的记录在消毒前丢弃。不要为“数据更全”清空它；换人时写 profile_ref，不写原始 suid。事实表唯一的物理删除是用户授权的 `scripts/purge-non-owner-profiles.sql`，已于 2026-09-15 执行。
+- 只存本人：`PROFILE_ALLOWLIST` 限定入库的 FitDays 成员（当前只有本人），其他成员和无 suid 的记录在消毒前丢弃。不要为“数据更全”清空它；换人时写 profile_ref，不写原始 suid。事实表唯一的物理删除是用户授权的 `scripts/purge-non-owner-profiles.sql`，已于 2026-09-15 执行。
 - 每次同步尝试一个 batch_id；只有持有 lease 的尝试能发布或写错误状态。
 - 趋势按请求时区（默认 Asia/Shanghai）自然日：先日中位数，再对有数据日等权平均；派生值逐次先算；bfr≤0 不参与体脂类指标。
 
@@ -29,7 +31,7 @@
 - 不要把 MCP SDK 的 Server 引回来：它静态引入 Ajv（`new Function`），会让生产 bundle 违反“无 eval 依赖”。协议层在 `src/mcp.ts` 自己实现并由 Inspector 互通检查覆盖。
 - D1 限制 compound SELECT 项数，`UNION ALL` 多了会报 “too many terms”，用标量子查询。
 - `wrangler d1 execute --persist-to` 指向含 8.3 短名（`~1`）的路径会报 internal error，用仓库内相对路径。
-- 账户没有 workers.dev 子域时 cron 注册失败（10063），Worker 与自定义域名却已上线，容易误以为部署成功；本账户子域为 `erikaalk`。
+- 账户没有 workers.dev 子域时 cron 注册失败（10063），Worker 与自定义域名却已上线，容易误以为部署成功；本账户已设置过子域。
 - FitDays 与 FitDays+ 同一账号只保留最后一次登录的 token，Kinetrail 每次同步都会把用户手机 App 顶下线。`PERIODIC_SYNC` 保持 `off`，不要为了“数据新鲜”打开，也不要自己排队同步；换 client_id 或 os_type 都绕不过（`research/FITDAYSPLUS.md`）。
 - 本账户 cron 触发器注册成功但从不投递，定时同步靠 `SyncScheduler` 的 DO alarm。判断调度是否在跑看 Observability 的 `origin=alarm` 与 `event:"scheduler"`；Cloudflare 的 scheduled 分析和“过往 Cron 事件”对它不适用。
 - MCP Inspector 在 Windows 的 Node 24 下退出时会崩溃，互通检查固定用 Node 22.23.2。

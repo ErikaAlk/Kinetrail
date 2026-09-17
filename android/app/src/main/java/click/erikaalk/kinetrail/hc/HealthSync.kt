@@ -32,7 +32,8 @@ import java.time.ZoneOffset
 import kotlin.reflect.KClass
 
 const val FITDAYS_PLUS = "cn.icomon.fitdayspro"
-const val KINETRAIL_ORIGIN = "https://kinetrail.erikaalk.click"
+/** 构建时从 android/local.properties 的 kinetrail.origin 读入。 */
+const val KINETRAIL_ORIGIN = BuildConfig.KINETRAIL_ORIGIN
 private const val ENDPOINT = "$KINETRAIL_ORIGIN/ingest/health-connect"
 private const val TOKEN_KEY = "changes_token"
 // 服务端请求体上限 64 KiB；按序列化后的字节分块，留出余量。

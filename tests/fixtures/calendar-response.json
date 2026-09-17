@@ -91,11 +91,11 @@
         {
           "measured_at": "2026-09-14T22:30:00+08:00",
           "metrics": {
-            "body_fat_pct": 19,
-            "weight_kg": 63.1,
-            "bmi": 23.5,
-            "fat_mass_kg": 11.989,
-            "fat_free_mass_kg": 51.111000000000004
+            "body_fat_pct": 21,
+            "weight_kg": 70.2,
+            "bmi": 22.9,
+            "fat_mass_kg": 14.742,
+            "fat_free_mass_kg": 55.458
           },
           "quality_flags": ["bmi_derived_from_height", "source_health_connect"]
         }

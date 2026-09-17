@@ -42,14 +42,14 @@ const payload = (groups: ReturnType<typeof group>[], deleted: string[] = []): In
   deleted_hc_ids: deleted,
 })
 
-// 2026-09-15 手机实读的 14:22 那次称重（research/HEALTHCONNECT.md G-HC2 明细）。
+// 形态照手机实读的一次称重（六个类型、float32 精度与原始 double），数值是合成的。
 const REAL = [
-  rec(1, 'weight', 63.099998474121094),
-  rec(2, 'body_fat', 19),
-  rec(3, 'body_water_mass', 37.481400056457495),
-  rec(4, 'bone_mass', 3.4000000953674316),
-  rec(5, 'basal_metabolic_rate', 1473),
-  rec(6, 'lean_body_mass', 51.1),
+  rec(1, 'weight', 70.19999694824219),
+  rec(2, 'body_fat', 21),
+  rec(3, 'body_water_mass', 41.6988),
+  rec(4, 'bone_mass', 3.5999999046325684),
+  rec(5, 'basal_metabolic_rate', 1580),
+  rec(6, 'lean_body_mass', 55.5),
 ]
 
 const c = clock(T1 + 3600_000)
@@ -71,11 +71,11 @@ const versionCount = async (owner: string) =>
 
 describe('Health Connect 推送：合并与发布', () => {
   it('float32 值取最短十进制，其余原样', () => {
-    expect(normalizeValue(63.099998474121094)).toBe(63.1)
-    expect(normalizeValue(3.4000000953674316)).toBe(3.4)
-    expect(normalizeValue(63.04999923706055)).toBe(63.05)
-    expect(normalizeValue(37.481400056457495)).toBe(37.481400056457495)
-    expect(normalizeValue(1473)).toBe(1473)
+    expect(normalizeValue(70.19999694824219)).toBe(70.2)
+    expect(normalizeValue(3.5999999046325684)).toBe(3.6)
+    expect(normalizeValue(70.3499984741211)).toBe(70.35)
+    expect(normalizeValue(41.6988)).toBe(41.6988)
+    expect(normalizeValue(1580)).toBe(1580)
   })
 
   it('一组记录发布为一次测量；原样重发不产生新版本', async () => {
@@ -84,13 +84,13 @@ describe('Health Connect 推送：合并与发布', () => {
     const [m] = await summaries(owner)
     expect(m.profile_ref).toBe(PROFILE)
     expect(m.metrics).toMatchObject({
-      weight_kg: 63.1,
-      body_fat_pct: 19,
-      bone_mass_kg: 3.4,
-      bmr_kcal: 1473,
+      weight_kg: 70.2,
+      body_fat_pct: 21,
+      bone_mass_kg: 3.6,
+      bmr_kcal: 1580,
       body_water_pct: 59.4,
-      // 63.1 / 1.64² = 23.46
-      bmi: 23.5,
+      // 70.2 / 1.75² = 22.92
+      bmi: 22.9,
     })
     expect(m.quality_flags).toEqual(
       expect.arrayContaining([
@@ -141,7 +141,7 @@ describe('Health Connect 推送：合并与发布', () => {
     const owner = crypto.randomUUID()
     await ingest(owner, payload([group(T1, [REAL[0] as HcRecord])]))
     expect(await ingest(owner, payload([group(T1, REAL.slice(0, 2))]))).toMatchObject({ accepted: 1 })
-    expect((await summaries(owner))[0].metrics.body_fat_pct).toBe(19)
+    expect((await summaries(owner))[0].metrics.body_fat_pct).toBe(21)
 
     const tampered = await ingest(owner, payload([group(T1, [rec(1, 'weight', 80)])]))
     expect(tampered).toMatchObject({ accepted: 0, rejected: [{ time_ms: T1, code: 'HC_GROUP_CONFLICT' }] })
@@ -149,7 +149,7 @@ describe('Health Connect 推送：合并与发布', () => {
     expect(swapped).toMatchObject({ rejected: [{ code: 'HC_GROUP_CONFLICT' }] })
     const offset = await ingest(owner, payload([{ ...group(T1, REAL.slice(0, 1)), zone_offset_seconds: 0 }]))
     expect(offset).toMatchObject({ rejected: [{ code: 'HC_GROUP_CONFLICT' }] })
-    expect((await summaries(owner))[0].metrics.weight_kg).toBe(63.1)
+    expect((await summaries(owner))[0].metrics.weight_kg).toBe(70.2)
     expect(await versionCount(owner)).toBe(2)
   })
 
@@ -163,7 +163,7 @@ describe('Health Connect 推送：合并与发布', () => {
     })
     const [m] = await summaries(owner)
     expect(m.metrics.body_fat_pct).toBeUndefined()
-    expect(m.metrics.weight_kg).toBe(63.1)
+    expect(m.metrics.weight_kg).toBe(70.2)
 
     // 设备重读时 HC 已经没有被删的记录；即使带上，也不会复活。
     expect(await ingest(owner, payload([group(T1, REAL)]))).toMatchObject({ accepted: 0, unchanged: 1 })
@@ -192,7 +192,7 @@ describe('Health Connect 推送：合并与发布', () => {
     const result = await ingest(owner, payload([group(T1, [...REAL, rec(7, 'heart_rate', 20)])]))
     expect(result).toMatchObject({ accepted: 1, rejected: [] })
     const [m] = await summaries(owner)
-    expect(m.metrics.weight_kg).toBe(63.1)
+    expect(m.metrics.weight_kg).toBe(70.2)
     expect(m.metrics.heart_rate_bpm).toBeNull()
     expect(m.quality_flags).toContain('heart_rate_out_of_range')
   })
@@ -238,9 +238,9 @@ describe('Health Connect 推送：合并与发布', () => {
   })
 
   it('BMI 按配置身高推算；身高缺失或不合理时不算', async () => {
-    expect(heightCm({ ...env, HC_HEIGHT_CM: '164' })).toBe(164)
+    expect(heightCm({ ...env, HC_HEIGHT_CM: '175' })).toBe(175)
     expect(heightCm({ ...env, HC_HEIGHT_CM: '' })).toBeNull()
-    expect(heightCm({ ...env, HC_HEIGHT_CM: '1640' })).toBeNull()
+    expect(heightCm({ ...env, HC_HEIGHT_CM: '1750' })).toBeNull()
     const owner = crypto.randomUUID()
     await ingestHealthConnect(
       { ...env, HC_HEIGHT_CM: '' },
@@ -251,7 +251,7 @@ describe('Health Connect 推送：合并与发布', () => {
       deps(noFetch, c.now),
     )
     const [m] = await summaries(owner)
-    expect(m.metrics.weight_kg).toBe(63.1)
+    expect(m.metrics.weight_kg).toBe(70.2)
     expect(m.metrics.bmi).toBeUndefined()
     expect(m.quality_flags).not.toContain('bmi_derived_from_height')
   })
@@ -284,66 +284,66 @@ describe('Health Connect 推送：合并与发布', () => {
   })
 })
 
-// 2026-09-15 20:43 那份 FitDays+ 报告的读数（与线上 20:43:44 那组 HC 记录同一次称重），时间平移到 T1 所在分钟。
+// 合成的报告读数（字段与 FitDays+ 报告一致，与 android-report.json 同一份），时间平移到 T1 所在分钟。
 const MINUTE = Math.floor(T1 / 60_000) * 60_000
 const seg = (kg: number, pct: number) => ({ kg, pct })
 const REPORT = {
   measured_minute_ms: MINUTE,
-  height_cm: 164,
-  age: 19,
-  body_score: 77,
-  weight_kg: { value: 63.9, min: 50.3, max: 68 },
-  body_fat_kg: { value: 12.3, min: 7.1, max: 14.2 },
-  bone_mass_kg: { value: 3.5, min: 2.9, max: 3.6 },
-  protein_kg: { value: 10.4, min: 8.6, max: 10.8 },
-  body_water_kg: { value: 37.8, min: 31.6, max: 39.4 },
-  muscle_kg: { value: 48.2, min: 40.3, max: 50.2 },
-  skeletal_muscle_kg: { value: 28.9, min: 25.1, max: 30.7 },
-  body_fat_pct: 19.3,
-  bone_mass_pct: 5.5,
-  protein_pct: 16.2,
-  body_water_pct: 59.2,
-  muscle_pct: 75.4,
-  skeletal_muscle_pct: 45.3,
-  bmi: 23.8,
-  obesity_degree_pct: 107,
-  target_weight_kg: 60.5,
-  weight_control_kg: -3.4,
-  fat_control_kg: -3.4,
+  height_cm: 175,
+  age: 30,
+  body_score: 76,
+  weight_kg: { value: 72.4, min: 56.7, max: 76.6 },
+  body_fat_kg: { value: 14.1, min: 8, max: 16.2 },
+  bone_mass_kg: { value: 3.9, min: 3.2, max: 4 },
+  protein_kg: { value: 11.8, min: 9.7, max: 12.3 },
+  body_water_kg: { value: 42.6, min: 35.9, max: 44.6 },
+  muscle_kg: { value: 54.4, min: 45.8, max: 57 },
+  skeletal_muscle_kg: { value: 32.7, min: 28.5, max: 34.9 },
+  body_fat_pct: 19.5,
+  bone_mass_pct: 5.4,
+  protein_pct: 16.3,
+  body_water_pct: 58.8,
+  muscle_pct: 75.1,
+  skeletal_muscle_pct: 45.2,
+  bmi: 23.6,
+  obesity_degree_pct: 106,
+  target_weight_kg: 68.2,
+  weight_control_kg: -4.2,
+  fat_control_kg: -4.2,
   muscle_control_kg: 0,
-  visceral_fat_level: 4,
-  bmr_kcal: 1484,
-  fat_free_mass_kg: 51.7,
-  subcutaneous_fat_pct: 13.8,
-  smi: 8.3,
-  body_age: 18,
-  whr: 0.8,
+  visceral_fat_level: 5,
+  bmr_kcal: 1612,
+  fat_free_mass_kg: 58.3,
+  subcutaneous_fat_pct: 14.2,
+  smi: 8.9,
+  body_age: 29,
+  whr: 0.9,
   segment_fat: {
-    left_arm: seg(0.6, 103.8),
-    right_arm: seg(0.5, 95.6),
-    trunk: seg(6.1, 162.6),
-    left_leg: seg(2, 134.6),
-    right_leg: seg(2, 134.7),
+    left_arm: seg(0.8, 108.4),
+    right_arm: seg(0.7, 99.1),
+    trunk: seg(7, 151.3),
+    left_leg: seg(2.3, 128.9),
+    right_leg: seg(2.3, 127.5),
   },
   segment_muscle: {
-    left_arm: seg(2.8, 101.7),
-    right_arm: seg(2.9, 104.3),
-    trunk: seg(22.4, 100.2),
-    left_leg: seg(8.3, 106.5),
-    right_leg: seg(8.3, 106.5),
+    left_arm: seg(3.2, 103.6),
+    right_arm: seg(3.3, 105.9),
+    trunk: seg(25.1, 101.4),
+    left_leg: seg(9.4, 105.2),
+    right_leg: seg(9.4, 105.2),
   },
   impedance_ohm: {
-    khz_20: { right_arm: 316.3, left_arm: 338, trunk: 21.2, right_leg: 254.8, left_leg: 275.6 },
-    khz_100: { right_arm: 271.7, left_arm: 294.7, trunk: 18.7, right_leg: 217.8, left_leg: 236.9 },
+    khz_20: { right_arm: 305.4, left_arm: 327.9, trunk: 20.6, right_leg: 243.1, left_leg: 262.7 },
+    khz_100: { right_arm: 262, left_arm: 284.3, trunk: 18.1, right_leg: 208.5, left_leg: 226.4 },
   },
 }
 const MATCHING = [
-  rec(21, 'weight', 63.900001525878906),
-  rec(22, 'body_fat', 19.3),
-  rec(23, 'body_water_mass', 37.828801390838635),
-  rec(24, 'bone_mass', 3.5),
-  rec(25, 'basal_metabolic_rate', 1484),
-  rec(26, 'lean_body_mass', 51.699999999999996),
+  rec(21, 'weight', 72.4000015258789),
+  rec(22, 'body_fat', 19.5),
+  rec(23, 'body_water_mass', 42.5712),
+  rec(24, 'bone_mass', 3.9),
+  rec(25, 'basal_metabolic_rate', 1612),
+  rec(26, 'lean_body_mass', 58.3),
 ]
 const withReports = (body: IngestPayload, reports: unknown[]) => ({ ...body, reports }) as IngestPayload
 
@@ -373,22 +373,22 @@ describe('识图报告：挂到同一次称重', () => {
     expect(before.quality_flags).not.toContain('report_attached')
     expect(m.quality_flags).toContain('report_attached')
     expect(m.metrics).toMatchObject({
-      weight_kg: 63.9,
-      body_fat_pct: 19.3,
-      // HC 水分质量推算的 59.2 与 bmi 推算值保留，报告不覆盖。
-      body_water_pct: 59.2,
-      bmi: 23.8,
-      muscle_pct: 75.4,
-      skeletal_muscle_pct: 45.3,
-      protein_pct: 16.2,
-      subcutaneous_fat_pct: 13.8,
-      visceral_fat_index: 4,
-      body_age: 18,
-      smi: 8.3,
-      whr: 0.8,
+      weight_kg: 72.4,
+      body_fat_pct: 19.5,
+      // HC 水分质量推算的 58.8 与 bmi 推算值保留，报告不覆盖。
+      body_water_pct: 58.8,
+      bmi: 23.6,
+      muscle_pct: 75.1,
+      skeletal_muscle_pct: 45.2,
+      protein_pct: 16.3,
+      subcutaneous_fat_pct: 14.2,
+      visceral_fat_index: 5,
+      body_age: 29,
+      smi: 8.9,
+      whr: 0.9,
     })
     const raw = await rawOf(owner, T1)
-    expect(raw.report.impedance_ohm.khz_20.left_arm).toBe(338)
+    expect(raw.report.impedance_ohm.khz_20.left_arm).toBe(327.9)
     expect(Object.keys(raw)).toEqual([
       'source',
       'origin',
@@ -410,7 +410,7 @@ describe('识图报告：挂到同一次称重', () => {
       accepted: 0,
       rejected: [{ time_ms: MINUTE, code: 'REPORT_CONFLICT' }],
     })
-    expect((await summaries(owner))[1].metrics.body_age).toBe(18)
+    expect((await summaries(owner))[1].metrics.body_age).toBe(29)
     expect(await versionCount(owner)).toBe(3)
   })
 
@@ -434,12 +434,12 @@ describe('识图报告：挂到同一次称重', () => {
       'REPORT_NO_MATCH',
     )
     expect(attachReport([stored(MINUTE - 10_000)], REPORT)).toBe('REPORT_NO_MATCH')
-    expect(attachReport([stored(T1)], { ...REPORT, weight_kg: { value: 63.91 } })).not.toBeTypeOf('string')
-    expect(attachReport([stored(T1)], { ...REPORT, weight_kg: { value: 63.92 } })).toBe('REPORT_NO_MATCH')
-    expect(attachReport([stored(T1)], { ...REPORT, body_fat_pct: 19.35 })).not.toBeTypeOf('string')
-    expect(attachReport([stored(T1)], { ...REPORT, body_fat_pct: 19.36 })).toBe('REPORT_MISMATCH')
-    expect(await reject([{ ...REPORT, weight_kg: { value: 63.8 } }])).toEqual(['REPORT_NO_MATCH'])
-    expect(await reject([{ ...REPORT, body_fat_pct: 19.5 }])).toEqual(['REPORT_MISMATCH'])
+    expect(attachReport([stored(T1)], { ...REPORT, weight_kg: { value: 72.41 } })).not.toBeTypeOf('string')
+    expect(attachReport([stored(T1)], { ...REPORT, weight_kg: { value: 72.42 } })).toBe('REPORT_NO_MATCH')
+    expect(attachReport([stored(T1)], { ...REPORT, body_fat_pct: 19.55 })).not.toBeTypeOf('string')
+    expect(attachReport([stored(T1)], { ...REPORT, body_fat_pct: 19.56 })).toBe('REPORT_MISMATCH')
+    expect(await reject([{ ...REPORT, weight_kg: { value: 72.3 } }])).toEqual(['REPORT_NO_MATCH'])
+    expect(await reject([{ ...REPORT, body_fat_pct: 19.7 }])).toEqual(['REPORT_MISMATCH'])
     expect(await versionCount(owner)).toBe(1)
     // 同一分钟两份：后一份拒绝，前一份照常处理。
     expect(
@@ -463,15 +463,15 @@ describe('识图报告：挂到同一次称重', () => {
     })
     expect((await summaries(owner))[0].metrics.body_water_pct).toBe(58)
     await ingest(owner, payload([group(T1, MATCHING)]))
-    expect((await rawOf(owner, T1)).report.body_score).toBe(77)
+    expect((await rawOf(owner, T1)).report.body_score).toBe(76)
     // HC 水分质量到了以后以 HC 推算值为准。
-    expect((await summaries(owner))[0].metrics.body_water_pct).toBe(59.2)
+    expect((await summaries(owner))[0].metrics.body_water_pct).toBe(58.8)
     await ingest(owner, payload([], [uuid(22)]))
     const [m] = await summaries(owner)
     // 在 HC 里删掉的体脂不让报告带回来。
     expect(m.metrics.body_fat_pct).toBeUndefined()
-    expect(m.metrics.muscle_pct).toBe(75.4)
-    expect((await rawOf(owner, T1)).report.body_score).toBe(77)
+    expect(m.metrics.muscle_pct).toBe(75.1)
+    expect((await rawOf(owner, T1)).report.body_score).toBe(76)
 
     const gone = crypto.randomUUID()
     await ingest(gone, payload([group(T1, MATCHING)], [uuid(21)]))
@@ -496,7 +496,7 @@ describe('识图报告：不能借报告改写 HC 的值', () => {
     const [m] = await summaries(owner)
     expect(m.metrics.body_fat_pct).toBeUndefined()
     expect(m.metrics.bone_mass_kg).toBeUndefined()
-    expect(m.metrics.skeletal_muscle_pct).toBe(45.3)
+    expect(m.metrics.skeletal_muscle_pct).toBe(45.2)
   })
 
   it('HC 水分质量越界时不用报告的水分率顶上', async () => {
@@ -592,7 +592,7 @@ describe('Health Connect 推送：HTTP 边界', () => {
       withReports(payload([]), [{ ...REPORT, note: '手写' }]),
       withReports(payload([]), [{ ...REPORT, body_age: '18' }]),
       withReports(payload([]), [{ ...REPORT, measured_minute_ms: MINUTE + 1000 }]),
-      withReports(payload([]), [{ ...REPORT, segment_fat: { trunk: seg(6.1, 162.6) } }]),
+      withReports(payload([]), [{ ...REPORT, segment_fat: { trunk: seg(7, 151.3) } }]),
       withReports(payload([]), [{ measured_minute_ms: MINUTE }]),
     ]
     for (const bad of invalid) {

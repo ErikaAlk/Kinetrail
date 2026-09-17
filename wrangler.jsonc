@@ -1,3 +1,5 @@
+// 这里全是占位符。真实部署把本文件复制成 wrangler.local.jsonc（不进 git），在那份里填自己的值，
+// 所有 wrangler 命令都加 -c wrangler.local.jsonc。步骤见 docs/operations.md 第 2 节。
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "kinetrail",
@@ -8,16 +10,16 @@
   // 只走自定义域名；不开 workers.dev 与预览 URL，避免出现第二个对外源。
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "kinetrail.erikaalk.click", "custom_domain": true }],
+  "routes": [{ "pattern": "kinetrail.example.com", "custom_domain": true }],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "kinetrail",
-      "database_id": "a5b20e9b-2531-4753-8c00-6774dfe93206",
+      "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
   ],
-  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "30800a8f19c0417aac3121f080ba8850" }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "00000000000000000000000000000000" }],
   // 本账户 cron 注册成功却从不投递（2026-09-14 实测），同步调度由 SyncScheduler 的 alarm 驱动；cron 保留，恢复后两边经 lease 互斥。
   "triggers": { "crons": ["*/10 * * * *"] },
   "durable_objects": { "bindings": [{ "name": "SYNC_SCHEDULER", "class_name": "SyncScheduler" }] },
@@ -25,24 +27,24 @@
   // 不记录调用日志（含请求 URL/query）；应用日志只写脱敏字段。
   "observability": { "enabled": true, "logs": { "invocation_logs": false } },
   "vars": {
-    "PUBLIC_ORIGIN": "https://kinetrail.erikaalk.click",
+    "PUBLIC_ORIGIN": "https://kinetrail.example.com",
     "OWNER_ID": "owner",
     "FITDAYS_HISTORY_START": "2018-01-01T00:00:00+08:00",
-    "ACCESS_OIDC_ISSUER": "https://erikaalk.cloudflareaccess.com/cdn-cgi/access/sso/oidc/ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610",
-    "ACCESS_OIDC_AUTHORIZATION_ENDPOINT": "https://erikaalk.cloudflareaccess.com/cdn-cgi/access/sso/oidc/ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610/authorization",
-    "ACCESS_OIDC_TOKEN_ENDPOINT": "https://erikaalk.cloudflareaccess.com/cdn-cgi/access/sso/oidc/ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610/token",
-    "ACCESS_OIDC_JWKS_URL": "https://erikaalk.cloudflareaccess.com/cdn-cgi/access/sso/oidc/ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610/jwks",
-    "ACCESS_CLIENT_ID": "ce38010a547c4112ef7e39a2f7809e1609ce06ff20d929954dc6453ca4ef0610",
-    "OWNER_OIDC_SUB": "777b3d5e-dc53-50ea-81b5-329d561ca0cc",
-    // 只同步本人（FitDays 成员 Erika）；其他成员与无 suid 的记录不落库。
-    "PROFILE_ALLOWLIST": "p_914ea14c79915f2f",
+    "ACCESS_OIDC_ISSUER": "https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>",
+    "ACCESS_OIDC_AUTHORIZATION_ENDPOINT": "https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>/authorization",
+    "ACCESS_OIDC_TOKEN_ENDPOINT": "https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>/token",
+    "ACCESS_OIDC_JWKS_URL": "https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client-id>/jwks",
+    "ACCESS_CLIENT_ID": "<client-id>",
+    "OWNER_OIDC_SUB": "",
+    // 只同步本人的 FitDays 成员（profile_ref，逗号分隔）；其他成员与无 suid 的记录不落库。空 = 保留全部。
+    "PROFILE_ALLOWLIST": "",
     // FitDays/FitDays+ 同一账号只保留最后一次登录的 token，定时同步会把手机顶下线；只在用户明确刷新时登录。
     "PERIODIC_SYNC": "off",
-    // Health Connect 推送：只接受晚于旧 FitDays 最后一条测量（09:17:00）的称重，避免跨来源重复。
+    // Health Connect 推送：只接受晚于这个时刻的称重。从 FitDays 迁移过来时填旧来源最后一条测量的时刻，避免跨来源重复。
     "HC_ACCEPT_AFTER": "2026-09-15T09:17:00+08:00",
-    // FitDays+ 只把主用户写进 HC（research/HEALTHCONNECT.md G-HC3）；推送的测量归到现有本人 profile，趋势不断档。
-    "HC_PROFILE_REF": "p_914ea14c79915f2f",
+    // FitDays+ 只把主用户写进 HC（research/HEALTHCONNECT.md G-HC3）；推送的测量归到本人 profile，已有旧数据时用同一个，趋势不断档。
+    "HC_PROFILE_REF": "p_0000000000000000",
     // 本人身高（cm）。FitDays+ 不往 HC 写 BMI，推送入库时按它推算；改身高只影响之后新产生的版本。
-    "HC_HEIGHT_CM": "164"
+    "HC_HEIGHT_CM": "170"
   }
 }
