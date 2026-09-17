@@ -24,7 +24,7 @@
 
 ## 环境坑
 
-- ChatGPT 不会自动拉新的 MCP 工具列表：改了工具参数或说明并部署后，要在 ChatGPT 插件设置里点 Refresh 再开新对话，否则模型看不到新字段（`docs/operations.md` 发布步骤）。
+- ChatGPT 不会自动拉新的 MCP 工具列表，而且用户在 Business 工作区：工具定义在连接时冻结，插件设置里点 Refresh、开新对话都不生效，模型仍按旧定义调用（不报错，只是不传新字段）。改了工具参数或说明并部署后，要在 ChatGPT 里删除 Kinetrail 再重新添加、授权，然后开新对话（`docs/operations.md` 发布步骤）。判断有没有生效只能看结果：线上 `tools/list` 本身没问题，查 D1 里新字段是否写进去。
 - vitest 用 `@cloudflare/vitest-plugin`（`@cloudflare/vitest-pool-workers` 已改名）；每个测试文件独立存储，同文件内共享 D1，测试用随机 owner 隔离。
 - 不要把 MCP SDK 的 Server 引回来：它静态引入 Ajv（`new Function`），会让生产 bundle 违反“无 eval 依赖”。协议层在 `src/mcp.ts` 自己实现并由 Inspector 互通检查覆盖。
 - D1 限制 compound SELECT 项数，`UNION ALL` 多了会报 “too many terms”，用标量子查询。
