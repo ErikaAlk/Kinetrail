@@ -37,9 +37,11 @@
 
 沿用 `~\.claude\design-references\android-reference.md` 已确认的 Android 基础（顶栏收起、材质、分组节奏、行与箭头），设计系统代码在 `designsystem/`，从 `lab/android-design-sample` 复制后按本 App 裁剪。色板为品牌方向「孔雀蓝」，由 `palette.py` 生成后按文字承载面集合收敛，`KtContrastTest` 钉住对比度；卡片不画描边，靠底色和画布分层（浅 1.11:1、深 1.25:1，调整记录见 `KtPalette` 注释）；启动图标是 `assets/icon.svg` 的自适应图标版本。
 
-一级导航是全局 4.6 的悬浮 Tab Bar：记录（训练日历）、同步（Health Connect 与报告识图）、设置（默认首页、体测报告版式、令牌与版本）。设置里的两组单选点一下立即生效，存在 SharedPreferences；默认首页只能选记录或同步，默认同步，冷启动时落在这一页。核对报告和推送令牌是从所属 tab 进去的子页面，返回键和顶栏返回都回到那个 tab，底栏仍高亮它。底栏材质的厚度是登记在案的覆盖：日历选中的日期格和详情页主按钮是 `accent.primary` 填充，会滚到条底下，全局默认的 0.48 那一档标签只有 2.6:1，两套都收到 0.86（理由与实测值见 `KtMaterial`，`KtMaterialContrastTest` 钉住）。
+一级导航是全局 4.6 的悬浮 Tab Bar：记录（训练日历）、同步（Health Connect 与报告识图）、设置（默认首页、体测报告版式、令牌与版本）。设置里「默认首页」「体测报告」点一下在原地展开选项，选中即保存（SharedPreferences）并收起；默认首页只能选记录或同步，默认同步，冷启动时落在这一页。核对报告和推送令牌是从所属 tab 进去的子页面，返回键和顶栏返回都回到那个 tab，底栏仍高亮它。底栏材质的厚度是登记在案的覆盖：日历选中的日期格和详情页主按钮是 `accent.primary` 填充，会滚到条底下，全局默认的 0.48 那一档标签只有 2.6:1，两套都收到 0.86（理由与实测值见 `KtMaterial`，`KtMaterialContrastTest` 钉住）。
 
 ## 构建
+
+App 连接的服务端地址写死在 `HealthSync.kt` 的 `KINETRAIL_ORIGIN`（推送和日历共用）。部署自己的实例时先改它，完整流程见 [`docs/operations.md`](../docs/operations.md) 第 2 节。
 
 工具链与本机其他 Android 项目一致：Gradle 8.14 / AGP 8.12.1 / Kotlin 2.2.20（含 Compose 编译插件），JDK 用 Android Studio 自带的 JBR 21。haze 固定 1.6.10（1.7+ 需要 Kotlin 2.3）。`local.properties` 不入库，内容为 `sdk.dir=<Android SDK 路径>`。
 

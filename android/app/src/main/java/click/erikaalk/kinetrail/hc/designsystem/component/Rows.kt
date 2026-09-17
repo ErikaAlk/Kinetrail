@@ -1,7 +1,13 @@
 package click.erikaalk.kinetrail.hc.designsystem.component
 
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -24,15 +30,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -45,6 +55,7 @@ import click.erikaalk.kinetrail.hc.designsystem.KtType
 import click.erikaalk.kinetrail.hc.designsystem.ktColorTween
 import click.erikaalk.kinetrail.hc.designsystem.ktColors
 import click.erikaalk.kinetrail.hc.designsystem.ktFocusRing
+import click.erikaalk.kinetrail.hc.designsystem.ktTransformTween
 
 /** 单行设置项。全局「Settings 默认结构」的 Mobile 定值，正好等于触控下限。 */
 private val ROW_MIN_HEIGHT = 48.dp
@@ -141,6 +152,8 @@ fun SettingRow(
      */
     chevron: Boolean = false,
     role: Role = Role.Button,
+    /** 只加在起始边的额外缩进，给展开在另一行下面的子选项用；按下的填充仍然铺满整行。 */
+    indent: Dp = 0.dp,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
@@ -196,8 +209,10 @@ fun SettingRow(
                 minHeight = if (subtitle == null) ROW_MIN_HEIGHT else ROW_MIN_HEIGHT_WITH_SUBTITLE,
             )
             .padding(
-                horizontal = LocalRowInset.current,
-                vertical = KtSpacing.Padding.controlY,
+                start = LocalRowInset.current + indent,
+                end = LocalRowInset.current,
+                top = KtSpacing.Padding.controlY,
+                bottom = KtSpacing.Padding.controlY,
             )
             .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
@@ -260,6 +275,7 @@ fun ChoiceRow(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     enabled: Boolean = true,
+    indent: Dp = 0.dp,
 ) {
     val colors = ktColors
     SettingRow(
@@ -267,6 +283,7 @@ fun ChoiceRow(
         subtitle = subtitle,
         enabled = enabled,
         role = Role.RadioButton,
+        indent = indent,
         modifier = modifier,
         onClick = onSelect,
         trailing = {
@@ -281,4 +298,70 @@ fun ChoiceRow(
             }
         },
     )
+}
+
+/**
+ * 点一下在原地展开选项的一行。收起时右侧是当前值和 ⌄；展开后选项列在下面，
+ * 文字缩进到这一行标题的起始线，选中一项就保存并收起。
+ * 原地展开不是进下一屏，所以用 ⌄ 不用 ›。展开收起用「局部展开」那一档时长，减少动态时直接到位。
+ */
+@Composable
+fun <T> ExpandableChoiceRow(
+    title: String,
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
+    @DrawableRes icon: Int? = null,
+    /** 某个选项的说明。选中的那项有说明时，收起状态下也显示在标题下面。 */
+    note: (T) -> String? = { null },
+) {
+    val colors = ktColors
+    var expanded by remember { mutableStateOf(false) }
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) -90f else 90f,
+        animationSpec = ktTransformTween(KtMotion.SMALL),
+        label = "disclosureChevron",
+    )
+    val indent = if (icon != null) ROW_ICON_SLOT + KtSpacing.Gap.inline else 0.dp
+    Column(Modifier.fillMaxWidth()) {
+        SettingRow(
+            title = title,
+            subtitle = note(selected),
+            value = label(selected),
+            icon = icon,
+            modifier = Modifier.semantics { stateDescription = if (expanded) "已展开" else "已收起" },
+            onClick = { expanded = !expanded },
+            trailing = {
+                Icon(
+                    painter = painterResource(R.drawable.ic_chevron_right),
+                    contentDescription = null,
+                    tint = colors.text.tertiary,
+                    modifier = Modifier.size(ROW_CHEVRON_SIZE).rotate(rotation),
+                )
+            },
+        )
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(ktTransformTween(KtMotion.SMALL)) + fadeIn(ktColorTween(KtMotion.SMALL)),
+            exit = shrinkVertically(ktTransformTween(KtMotion.SMALL, KtMotion.exit)) +
+                fadeOut(ktColorTween(KtMotion.SMALL, KtMotion.exit)),
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                for (option in options) {
+                    RowDivider(inset = LocalRowInset.current + indent)
+                    ChoiceRow(
+                        title = label(option),
+                        subtitle = note(option),
+                        selected = option == selected,
+                        indent = indent,
+                        onSelect = {
+                            onSelect(option)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+        }
+    }
 }
