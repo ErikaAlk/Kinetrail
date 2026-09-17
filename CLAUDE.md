@@ -1,6 +1,6 @@
 # CLAUDE.md — Kinetrail
 
-个人体测（手机经 Health Connect 推送；早期为 FitDays 只读拉取）与训练事实的远程 MCP 服务器。Cloudflare Worker + D1 + OAuth Provider(KV) + Access OIDC。契约以 `ARCHITECTURE_DECISION.md`、`DATA_CONTRACT.md`、`MCP_CONTRACT.md` 为准；Health Connect 方案与实测见 `research/HEALTHCONNECT.md`；手机端在 `android/`；运维见 `docs/operations.md`。
+个人体测（手机经 Health Connect 推送；早期为 FitDays 只读拉取）与训练事实的远程 MCP 服务器。Cloudflare Worker + D1 + OAuth Provider(KV) + Access OIDC。契约以 `ARCHITECTURE_DECISION.md`、`DATA_CONTRACT.md`、`MCP_CONTRACT.md` 为准；Health Connect 方案与实测见 `research/HEALTHCONNECT.md`；手机端在 `android/`；运维见 `docs/operations.md`；适配小米体脂秤 S800 的步骤见 `docs/xiaomi-s800.md`。
 
 ## 命令
 

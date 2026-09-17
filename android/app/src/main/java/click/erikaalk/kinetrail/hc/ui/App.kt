@@ -132,10 +132,13 @@ private fun Root(state: AppState, actions: AppActions) {
     }
 }
 
-private class TabSpec(val screen: Screen, val label: String, @param:DrawableRes val icon: Int)
+class TabSpec(val screen: Screen, val label: String, @param:DrawableRes val icon: Int)
 
-/** 底栏上的一级目的地，顺序就是条上的顺序。标签比页面标题短一档：条上放得下，也不用重复"训练""体测"。 */
-private val TABS = listOf(
+/**
+ * 底栏上的一级目的地，顺序就是条上的顺序。标签比页面标题短一档：条上放得下，也不用重复"训练""体测"。
+ * 设置页的「默认首页」用同一份标签。
+ */
+val TABS = listOf(
     TabSpec(Screen.Records, "记录", R.drawable.ic_calendar_days),
     TabSpec(Screen.Sync, "同步", R.drawable.ic_refresh_cw),
     TabSpec(Screen.Settings, "设置", R.drawable.ic_settings_2),

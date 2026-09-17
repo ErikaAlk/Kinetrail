@@ -14,6 +14,7 @@ import click.erikaalk.kinetrail.hc.designsystem.component.InlineBanner
 import click.erikaalk.kinetrail.hc.designsystem.component.PageTitle
 import click.erikaalk.kinetrail.hc.designsystem.component.SettingRow
 import click.erikaalk.kinetrail.hc.designsystem.component.SettingsSection
+import click.erikaalk.kinetrail.hc.report.ReportFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -85,7 +86,10 @@ fun SyncScreen(state: AppState, actions: AppActions, insets: PageInsets) {
         SettingsSection(
             title = "体测报告",
             hasIcons = true,
-            footer = "也可以在 FitDays+ 的报告页点分享，选身迹。",
+            footer = when (state.reportFormat) {
+                ReportFormat.FitDaysPlus -> "也可以在 FitDays+ 的报告页点分享，选身迹。"
+                ReportFormat.XiaomiS800 -> "小米体脂秤 S800 的报告还没有适配，识别不出读数。"
+            },
             rows = listOf(
                 {
                     SettingRow(
