@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import click.erikaalk.kinetrail.hc.calendar.CalendarDay
 import click.erikaalk.kinetrail.hc.report.ParseResult
+import click.erikaalk.kinetrail.hc.report.ReportFormat
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -42,8 +43,14 @@ sealed interface UploadState {
 
 /** 界面状态。Activity 声明了 configChanges，不会因旋转或换主题重建，所以不需要 ViewModel。 */
 class AppState {
-    /** 打开就落在同步页：打开 App 会自动同步一次，结果显示在这一页。 */
+    /** 打开 App 时落在 [homeScreen]，由 Activity 启动时设置。 */
     var screen by mutableStateOf(Screen.Sync)
+
+    /** 默认首页，设置里选，只能是记录或同步。默认同步：打开 App 会自动同步一次，结果显示在那一页。 */
+    var homeScreen by mutableStateOf(Screen.Sync)
+
+    /** 识别报告图片时按哪种版式解析。 */
+    var reportFormat by mutableStateOf(ReportFormat.FitDaysPlus)
 
     var tokenSaved by mutableStateOf(false)
     /** null = Health Connect 不可用。 */
@@ -79,4 +86,6 @@ interface AppActions {
     fun uploadReport()
     fun saveToken(token: String): Boolean
     fun navigate(screen: Screen)
+    fun setHomeScreen(screen: Screen)
+    fun setReportFormat(format: ReportFormat)
 }

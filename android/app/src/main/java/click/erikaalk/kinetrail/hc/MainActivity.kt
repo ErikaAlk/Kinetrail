@@ -20,6 +20,7 @@ import androidx.lifecycle.lifecycleScope
 import click.erikaalk.kinetrail.hc.calendar.CalendarRange
 import click.erikaalk.kinetrail.hc.calendar.fetchCalendar
 import click.erikaalk.kinetrail.hc.calendar.parseCalendar
+import click.erikaalk.kinetrail.hc.report.ReportFormat
 import click.erikaalk.kinetrail.hc.report.recognizeReport
 import click.erikaalk.kinetrail.hc.report.toIngestJson
 import click.erikaalk.kinetrail.hc.ui.AppActions
@@ -62,7 +63,12 @@ class MainActivity : ComponentActivity(), AppActions {
         state.lastSyncAt = prefs.getLong(LAST_AT, 0L).takeIf { it > 0 }
         state.lastSyncMessage = prefs.getString(LAST_MESSAGE, null)
         state.lastSyncOk = prefs.getBoolean(LAST_OK, true)
+        // 存的是枚举名；改名或读不出来就退回默认，不报错
+        state.homeScreen = Screen.entries.firstOrNull { it.name == prefs.getString(HOME_SCREEN, null) } ?: Screen.Sync
+        state.reportFormat = ReportFormat.entries.firstOrNull { it.name == prefs.getString(REPORT_FORMAT, null) } ?: ReportFormat.FitDaysPlus
         setContent { KinetrailApp(state, this) }
+        // 走 navigate 而不是直接赋值：首页是记录时要顺带读日历
+        navigate(state.homeScreen)
         if (savedInstanceState == null) handleShare(intent)
     }
 
@@ -101,6 +107,16 @@ class MainActivity : ComponentActivity(), AppActions {
         // 记录页：当月还没有可用数据（冷启动后首次进入、上次失败且本机没有这个月）才发请求；
         // 已经有就原样保留，连同上次选中的日期，要新数据点月份旁的刷新。
         if (screen == Screen.Records && state.calendarLoadedMonth != state.month) showMonth(state.month)
+    }
+
+    override fun setHomeScreen(screen: Screen) {
+        state.homeScreen = screen
+        prefs.edit().putString(HOME_SCREEN, screen.name).apply()
+    }
+
+    override fun setReportFormat(format: ReportFormat) {
+        state.reportFormat = format
+        prefs.edit().putString(REPORT_FORMAT, format.name).apply()
     }
 
     override fun requestPermissions() = requestPermissions.launch(permissions)
@@ -211,7 +227,7 @@ class MainActivity : ComponentActivity(), AppActions {
         val attempt = ++reportAttempt
         lifecycleScope.launch {
             val result = try {
-                ReportState.Parsed(recognizeReport(this@MainActivity, uri))
+                ReportState.Parsed(recognizeReport(this@MainActivity, uri, state.reportFormat))
             } catch (e: Exception) {
                 ReportState.Failed("图片读不出来（${e.javaClass.simpleName}）")
             }
@@ -243,5 +259,7 @@ class MainActivity : ComponentActivity(), AppActions {
         const val LAST_AT = "last_sync_at"
         const val LAST_MESSAGE = "last_sync_message"
         const val LAST_OK = "last_sync_ok"
+        const val HOME_SCREEN = "home_screen"
+        const val REPORT_FORMAT = "report_format"
     }
 }

@@ -250,3 +250,35 @@ fun SettingRow(
     }
 }
 
+
+/** 从一组里挑一个：选中的那行右侧打勾，不用单选圆点。 */
+@Composable
+fun ChoiceRow(
+    title: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    enabled: Boolean = true,
+) {
+    val colors = ktColors
+    SettingRow(
+        title = title,
+        subtitle = subtitle,
+        enabled = enabled,
+        role = Role.RadioButton,
+        modifier = modifier,
+        onClick = onSelect,
+        trailing = {
+            if (selected) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_check),
+                    // 不给 null：选中与否不能只靠一个勾的位置传达，读屏也要听得见
+                    contentDescription = "已选择",
+                    tint = if (enabled) colors.accent.text else colors.text.disabled,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        },
+    )
+}

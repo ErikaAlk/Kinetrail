@@ -1,4 +1,4 @@
-// ML Kit 中文文字识别（模型打包在 APK 里，离线），把图片变成文本行交给 ReportParser。图片不离开手机。
+// ML Kit 中文文字识别（模型打包在 APK 里，离线），把图片变成文本行，按设置里选的报告版式交给对应的解析器。图片不离开手机。
 
 package click.erikaalk.kinetrail.hc.report
 
@@ -16,7 +16,15 @@ import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-suspend fun recognizeReport(context: Context, uri: Uri): ParseResult = withContext(Dispatchers.Default) {
+/** 体测报告的版式，设置页里选。适配新的秤见 `docs/xiaomi-s800.md`。 */
+enum class ReportFormat(val label: String) {
+    FitDaysPlus("FitDays+"),
+
+    /** 占位：还没有解析器。识别照常跑（调试版照常导出文本行），结果只提示未适配。 */
+    XiaomiS800("小米体脂秤 S800"),
+}
+
+suspend fun recognizeReport(context: Context, uri: Uri, format: ReportFormat): ParseResult = withContext(Dispatchers.Default) {
     val image = InputImage.fromFilePath(context, uri)
     val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
     try {
@@ -26,7 +34,10 @@ suspend fun recognizeReport(context: Context, uri: Uri): ParseResult = withConte
         }
         // 调试版把识别出的文本行留在应用私有目录，便于对照真实报告调解析规则（adb run-as 才能取）。
         if (BuildConfig.DEBUG) dumpLines(context, lines, image.width)
-        ReportParser.parse(lines, image.width.toFloat())
+        when (format) {
+            ReportFormat.FitDaysPlus -> ReportParser.parse(lines, image.width.toFloat())
+            ReportFormat.XiaomiS800 -> ParseResult(null, listOf("还没有适配${format.label} 的报告。"))
+        }
     } finally {
         recognizer.close()
     }
