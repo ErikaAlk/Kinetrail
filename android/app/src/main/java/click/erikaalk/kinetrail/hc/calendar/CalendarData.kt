@@ -138,75 +138,51 @@ fun num(value: Double): String {
 /** 日期格下面的小字：热量取整，不显示小数。 */
 fun kcalLabel(value: Double): String = "${Math.round(value)}"
 
-/** 只有负重和次数的一组才和相邻同负重的组合并；带时长或距离的组单独成行，字段不丢。 */
-private fun TrainingSet.loadAndRepsOnly() =
-    loadValue != null && reps != null && durationSeconds == null && distanceValue == null
+/** 一个数值和它的单位。界面把两者分开排：数值大，单位小一号。单位可以为空。 */
+data class Reading(val value: String, val unit: String)
 
-private fun loadText(set: TrainingSet): String? =
-    set.loadValue?.let { "${num(it)} ${set.loadUnit ?: "kg"}" }
+private fun List<Reading>.text() = joinToString(" ") { if (it.unit.isEmpty()) it.value else "${it.value} ${it.unit}" }
 
-private fun durationText(seconds: Int): String {
+/** 时长：77 分钟、1 分 30 秒、45 秒。不换算成小时，也不舍掉秒。 */
+fun durationReadings(seconds: Int): List<Reading> {
     val minutes = seconds / 60
-    if (minutes < 60) return "$minutes 分钟"
-    val rest = minutes % 60
-    return if (rest == 0) "${minutes / 60} 小时" else "${minutes / 60} 小时 $rest 分钟"
+    val rest = seconds % 60
+    return when {
+        minutes == 0 -> listOf(Reading("$rest", "秒"))
+        rest == 0 -> listOf(Reading("$minutes", "分钟"))
+        else -> listOf(Reading("$minutes", "分"), Reading("$rest", "秒"))
+    }
 }
+
+/** 训练卡抬头下面的一项统计：标签在上，数值在下。 */
+data class SessionStat(val label: String, val readings: List<Reading>)
+
+/** 时长、消耗、RPE，缺的整项不出现。场馆单独一行，不在这里。 */
+fun sessionStats(session: TrainingSession): List<SessionStat> = listOfNotNull(
+    session.durationSeconds?.let { SessionStat("时长", durationReadings(it)) },
+    session.caloriesKcal?.let { SessionStat("消耗", listOf(Reading(kcalLabel(it), "千卡"))) },
+    session.overallRpe?.let { SessionStat("RPE", listOf(Reading(num(it), ""))) },
+)
 
 /**
- * 一个动作的逐组描述，一段一行。
- * 负重相同的连续组合并成「45 kg × 12、12、10」；有氧组给时长和距离；缺的值不补。
+ * 一个动作的逐组表格，一组一行。[columns] 只放这个动作里至少有一组填了的字段，顺序固定为负重、次数、时长、距离；
+ * [rows] 里某组没填的格是 null。单位照服务端给的写（写入时数值和单位必须成对），不补默认单位。
  */
-fun describeSets(sets: List<TrainingSet>): List<String> {
-    val parts = mutableListOf<String>()
-    var i = 0
-    while (i < sets.size) {
-        val set = sets[i]
-        val load = loadText(set)
-        val reps = set.reps
-        if (load != null && reps != null && set.loadAndRepsOnly()) {
-            val group = mutableListOf(reps)
-            var j = i + 1
-            while (j < sets.size && sets[j].loadAndRepsOnly() && loadText(sets[j]) == load) {
-                group.add(sets[j].reps!!)
-                j++
-            }
-            parts.add("$load × ${group.joinToString("、")}")
-            i = j
-            continue
-        }
-        // 只报了次数（负重单位不明或自重）：同样合并成一段，不要写成「12 次；12 次；12 次」。
-        if (load == null && reps != null && set.durationSeconds == null && set.distanceValue == null) {
-            val group = mutableListOf(reps)
-            var j = i + 1
-            while (j < sets.size && sets[j].run {
-                    loadValue == null && reps != null && durationSeconds == null && distanceValue == null
-                }
-            ) {
-                group.add(sets[j].reps!!)
-                j++
-            }
-            parts.add("${group.joinToString("、")} 次")
-            i = j
-            continue
-        }
-        val pieces = listOfNotNull(
-            load,
-            reps?.let { "$it 次" },
-            set.durationSeconds?.let { durationText(it) },
-            set.distanceValue?.let { "${num(it)} ${set.distanceUnit ?: "km"}" },
-        )
-        parts.add(if (pieces.isEmpty()) "1 组" else pieces.joinToString(" · "))
-        i++
-    }
-    return parts
-}
+data class SetTable(val columns: List<String>, val rows: List<List<String?>>)
 
-/** 会话抬头下面那一排：时长、消耗、RPE，缺的不占位。场馆单独一行，不在这里。 */
-fun sessionSummary(session: TrainingSession): List<String> = listOfNotNull(
-    session.durationSeconds?.let { durationText(it) },
-    session.caloriesKcal?.let { "${kcalLabel(it)} 千卡" },
-    session.overallRpe?.let { "RPE ${num(it)}" },
+private fun withUnit(value: String, unit: String?) = if (unit == null) value else "$value $unit"
+
+private val SET_FIELDS = listOf<Pair<String, (TrainingSet) -> String?>>(
+    "负重" to { set -> set.loadValue?.let { withUnit(num(it), set.loadUnit) } },
+    "次数" to { set -> set.reps?.toString() },
+    "时长" to { set -> set.durationSeconds?.let { durationReadings(it).text() } },
+    "距离" to { set -> set.distanceValue?.let { withUnit(num(it), set.distanceUnit) } },
 )
+
+fun setTable(sets: List<TrainingSet>): SetTable {
+    val fields = SET_FIELDS.filter { (_, cell) -> sets.any { cell(it) != null } }
+    return SetTable(fields.map { it.first }, sets.map { set -> fields.map { (_, cell) -> cell(set) } })
+}
 
 /** 体测指标的中文名和单位。体重不在这里：卡片上单独用大字显示。 */
 internal val METRIC_LABELS = mapOf(
@@ -229,8 +205,10 @@ internal val METRIC_LABELS = mapOf(
     "height_cm" to ("身高" to "cm"),
 )
 
-/** 一组体测指标。[title] 为 null 的是卡片上默认露出的那组，其余点「展开指标」才显示。 */
-data class MetricGroup(val title: String?, val rows: List<Pair<String, String>>)
+data class MetricRow(val label: String, val reading: Reading)
+
+/** 一组体测指标。[title] 为 null 的是卡片主区右侧常驻的那组，其余点「展开指标」才显示。 */
+data class MetricGroup(val title: String?, val rows: List<MetricRow>)
 
 /** 分组与组内顺序。[METRIC_LABELS] 的每个键恰好出现在一组里，单测钉住。 */
 internal val METRIC_GROUPS = listOf(
@@ -241,15 +219,22 @@ internal val METRIC_GROUPS = listOf(
     "其他读数" to listOf("bmr_kcal", "whr", "body_age", "heart_rate_bpm", "height_cm"),
 )
 
-/** 按组列出体重以外的指标，空组不出现。服务端以后多给的指标按原键名排在「其他读数」最后，不会丢。 */
+/** 按组列出体重以外的指标，空组不出现。服务端以后多给的指标按原键名排在「其他读数」最后，不会丢，也不猜单位。 */
 fun metricGroups(metrics: Map<String, Double>): List<MetricGroup> {
     val extra = metrics.keys.filterNot { it == "weight_kg" || it in METRIC_LABELS }.sorted()
     return METRIC_GROUPS.map { (title, keys) ->
         val rows = keys.mapNotNull { key ->
             val value = metrics[key] ?: return@mapNotNull null
             val (name, unit) = METRIC_LABELS.getValue(key)
-            name to if (unit.isEmpty()) num(value) else "${num(value)} $unit"
+            MetricRow(name, Reading(num(value), unit))
         }
-        MetricGroup(title, if (title == "其他读数") rows + extra.map { it to num(metrics.getValue(it)) } else rows)
+        val unknown = extra.map { MetricRow(it, Reading(num(metrics.getValue(it)), "")) }
+        MetricGroup(title, if (title == "其他读数") rows + unknown else rows)
     }.filter { it.rows.isNotEmpty() }
 }
+
+/** 不是阻抗推算出来的指标：只有它们时不出现 BIA 说明。 */
+private val NOT_BIA = setOf("bmi", "heart_rate_bpm", "height_cm")
+
+/** 这次称重里有没有体脂、肌肉、水分这类 BIA 推算值。没见过的指标不算，不猜它的来历。 */
+fun hasBiaMetrics(metrics: Map<String, Double>): Boolean = metrics.keys.any { it in METRIC_LABELS && it !in NOT_BIA }

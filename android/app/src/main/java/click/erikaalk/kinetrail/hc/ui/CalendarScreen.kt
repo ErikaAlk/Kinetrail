@@ -20,10 +20,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,29 +36,37 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import click.erikaalk.kinetrail.hc.R
 import click.erikaalk.kinetrail.hc.calendar.BodyMeasurement
 import click.erikaalk.kinetrail.hc.calendar.CalendarDay
 import click.erikaalk.kinetrail.hc.calendar.TrainingEntry
 import click.erikaalk.kinetrail.hc.calendar.TrainingSession
-import click.erikaalk.kinetrail.hc.calendar.describeSets
 import click.erikaalk.kinetrail.hc.calendar.kcalLabel
+import click.erikaalk.kinetrail.hc.calendar.MetricRow
+import click.erikaalk.kinetrail.hc.calendar.Reading
+import click.erikaalk.kinetrail.hc.calendar.SetTable
+import click.erikaalk.kinetrail.hc.calendar.hasBiaMetrics
 import click.erikaalk.kinetrail.hc.calendar.metricGroups
 import click.erikaalk.kinetrail.hc.calendar.monthGrid
 import click.erikaalk.kinetrail.hc.calendar.num
-import click.erikaalk.kinetrail.hc.calendar.sessionSummary
+import click.erikaalk.kinetrail.hc.calendar.sessionStats
+import click.erikaalk.kinetrail.hc.calendar.setTable
 import click.erikaalk.kinetrail.hc.designsystem.KtRadius
 import click.erikaalk.kinetrail.hc.designsystem.KtSpacing
 import click.erikaalk.kinetrail.hc.designsystem.KtType
@@ -67,7 +77,6 @@ import click.erikaalk.kinetrail.hc.designsystem.component.KtIconButton
 import click.erikaalk.kinetrail.hc.designsystem.component.PageTitle
 import click.erikaalk.kinetrail.hc.designsystem.component.RowDivider
 import click.erikaalk.kinetrail.hc.designsystem.component.SecondaryButton
-import click.erikaalk.kinetrail.hc.designsystem.component.SectionFooter
 import click.erikaalk.kinetrail.hc.designsystem.component.SectionHeader
 import click.erikaalk.kinetrail.hc.designsystem.ktColors
 import click.erikaalk.kinetrail.hc.designsystem.ktFocusRing
@@ -234,7 +243,7 @@ private fun WeighMark(color: Color) {
 }
 
 /**
- * 一个日期格。选中是实色底块，今天是描边——两者靠形状区分。
+ * 一个日期格。选中是实色底块；今天是数字下面一道短线，选中时也在，今天和选中同时成立也分得开。
  * 读屏把整格读成一句（日期、今天、训练、热量、称重），不逐个读数字和标记。
  */
 @Composable
@@ -270,7 +279,6 @@ private fun DayCell(
             .ktFocusRing(interaction, KtRadius.mediumShape, onColoredSurface = selected)
             .clip(KtRadius.mediumShape)
             .background(if (selected) colors.accent.primary else Color.Transparent)
-            .then(if (today && !selected) Modifier.border(1.dp, colors.accent.border, KtRadius.mediumShape) else Modifier)
             .clickable(
                 interactionSource = interaction,
                 indication = LocalIndication.current,
@@ -294,7 +302,15 @@ private fun DayCell(
                 else -> colors.text.primary
             },
         )
-        // 标记这一格固定占一行字高，空着也占，保证同一周的数字在同一条线上
+        // 今天的短线。别的日期画透明的同一条，同一周的数字和标记才在同一条线上
+        Box(
+            Modifier
+                .padding(top = 2.dp)
+                .size(width = 12.dp, height = 2.dp)
+                .clip(CircleShape)
+                .background(if (today) markColor else Color.Transparent),
+        )
+        // 标记这一格固定占一行字高，空着也占
         val density = LocalDensity.current
         val slot = with(density) { KtType.caption.lineHeight.toDp() }
         // 系统字号很大时四位数热量塞不进格子：不折行也不截断，退回训练点，读屏和当天详情里仍有热量
@@ -351,6 +367,12 @@ private fun Legend(showKcal: Boolean) {
 private val TIME = DateTimeFormatter.ofPattern("HH:mm")
 private val WEEKDAYS = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
+/** 系统字号放大到这一档以上，横排的读数和表格改成竖排，不缩字也不截断。 */
+private const val LARGE_FONT_SCALE = 1.3f
+
+/** 等宽数字：不换系统字体，只让同一列的数字宽度一致。 */
+private fun TextStyle.tabular() = copy(fontFeatureSettings = "tnum")
+
 @Composable
 private fun DayDetail(date: LocalDate, day: CalendarDay?, loaded: Boolean, truncated: Boolean) {
     val colors = ktColors
@@ -383,15 +405,45 @@ private fun DayDetail(date: LocalDate, day: CalendarDay?, loaded: Boolean, trunc
         // 展开状态跟着这一天的这一次称重走，换了日期不会串到别的记录上
         key(date, index) { MeasurementCard(measurement, Modifier.padding(top = top)) }
     }
-    if (day.measurements.any { m -> m.metrics.keys.any { it != "weight_kg" } }) {
-        SectionFooter("BIA 数值适合看趋势，不是医疗诊断。")
-    }
 }
 
 /** 卡片里分隔两块内容的线，上下各留一档同组间距。 */
 @Composable
 private fun CardDivider() {
     RowDivider(Modifier.padding(vertical = KtSpacing.Gap.control), inset = 0.dp)
+}
+
+/** 数值大、单位小，按基线对齐：「77 分钟」「1 分 30 秒」「63.35 kg」。 */
+@Composable
+private fun Readings(readings: List<Reading>, valueStyle: TextStyle, modifier: Modifier = Modifier) {
+    val colors = ktColors
+    Row(modifier) {
+        readings.forEachIndexed { index, reading ->
+            Text(
+                reading.value,
+                style = valueStyle.tabular(),
+                color = colors.text.primary,
+                modifier = Modifier.alignByBaseline().padding(start = if (index == 0) 0.dp else KtSpacing.Gap.related),
+            )
+            if (reading.unit.isNotEmpty()) {
+                Text(
+                    reading.unit,
+                    style = KtType.secondary,
+                    color = colors.text.secondary,
+                    modifier = Modifier.alignByBaseline().padding(start = KtSpacing.Gap.related),
+                )
+            }
+        }
+    }
+}
+
+/** 标签在上、读数在下的一项。 */
+@Composable
+private fun LabeledReading(label: String, readings: List<Reading>, valueStyle: TextStyle, modifier: Modifier = Modifier) {
+    Column(modifier.semantics(mergeDescendants = true) {}) {
+        Text(label, style = KtType.secondary, color = ktColors.text.secondary)
+        Readings(readings, valueStyle, Modifier.padding(top = KtSpacing.Gap.related))
+    }
 }
 
 @Composable
@@ -401,28 +453,34 @@ private fun SessionBody(session: TrainingSession) {
     val span = listOfNotNull(session.startedAt?.format(TIME), session.endedAt?.format(TIME))
         .distinct()
         .joinToString("–")
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            if (span.isEmpty()) "训练" else "训练 $span",
-            style = KtType.sectionTitle,
-            color = colors.text.primary,
-            modifier = Modifier.weight(1f),
-        )
+    Row {
+        Text("训练", style = KtType.sectionTitle, color = colors.text.primary, modifier = Modifier.alignByBaseline())
+        Spacer(Modifier.weight(1f))
+        if (span.isNotEmpty()) {
+            Text(span, style = KtType.secondary.tabular(), color = colors.text.secondary, modifier = Modifier.alignByBaseline())
+        }
         if (session.status == "open") {
-            Text("未结束", style = KtType.secondary, color = colors.semantic.warning.text)
+            Text(
+                "未结束",
+                style = KtType.secondary,
+                color = colors.semantic.warning.text,
+                modifier = Modifier.alignByBaseline().padding(start = KtSpacing.Gap.inline),
+            )
         }
     }
-    val summary = sessionSummary(session)
-    if (summary.isNotEmpty()) {
+    // 时长照服务端的 duration_seconds 显示，不拿起止时间去算或纠正
+    val stats = sessionStats(session)
+    if (stats.isNotEmpty()) {
         FlowRow(
-            Modifier.padding(top = KtSpacing.Gap.related),
-            horizontalArrangement = Arrangement.spacedBy(KtSpacing.Gap.group),
+            Modifier.padding(top = KtSpacing.Gap.control),
+            horizontalArrangement = Arrangement.spacedBy(KtSpacing.Gap.section),
+            verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.control),
         ) {
-            summary.forEach { Text(it, style = KtType.body, color = colors.text.secondary) }
+            stats.forEach { LabeledReading(it.label, it.readings, KtType.title) }
         }
     }
     session.facility?.let {
-        Text(it, style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.padding(top = KtSpacing.Gap.related))
+        Text(it, style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.padding(top = KtSpacing.Gap.control))
     }
 
     if (session.entries.isEmpty()) {
@@ -441,29 +499,99 @@ private fun SessionBody(session: TrainingSession) {
     }
 }
 
-/** 一个动作：名字、器械、每段负重一行、动作自己的备注。 */
+/** 一个动作：名字、器械、逐组表格、动作自己的备注。 */
 @Composable
 private fun EntryBlock(entry: TrainingEntry) {
     val colors = ktColors
     Text(entry.name, style = KtType.body.copy(fontWeight = FontWeight.SemiBold), color = colors.text.primary)
-    entry.equipment?.let {
+    // 器械和动作名一字不差时不重复写；「高位下拉1（偏重那台）」这种有区别的照写
+    entry.equipment?.takeIf { it != entry.name }?.let {
         Text(it, style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.padding(top = KtSpacing.Gap.related))
     }
-    for (line in describeSets(entry.sets)) {
-        Text(line, style = KtType.body, color = colors.text.primary, modifier = Modifier.padding(top = KtSpacing.Gap.related))
+    val table = setTable(entry.sets)
+    if (table.columns.isNotEmpty()) {
+        SetTableView(table, Modifier.padding(top = KtSpacing.Gap.control))
+    } else if (entry.sets.isNotEmpty()) {
+        Text("${entry.sets.size} 组", style = KtType.body, color = colors.text.primary, modifier = Modifier.padding(top = KtSpacing.Gap.related))
     }
     entry.notes?.let {
-        Text("备注：$it", style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.padding(top = KtSpacing.Gap.related))
+        Text("备注：$it", style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.padding(top = KtSpacing.Gap.control))
     }
 }
 
-/** 一次称重：体重大字，体脂率和 BMI 常驻，其余指标按组收在「展开指标」里。 */
+/** 列宽权重：组号窄，数据列等宽。同一个动作的每一行用同一套权重，上下才对得齐。 */
+private const val INDEX_COLUMN_WEIGHT = 0.5f
+
+/** 表格里的一格：右对齐；没填写「—」，读屏读「未记录」。 */
+@Composable
+private fun SetCell(text: String?, modifier: Modifier = Modifier) {
+    val colors = ktColors
+    Text(
+        text ?: "—",
+        style = KtType.body.tabular(),
+        color = if (text == null) colors.text.tertiary else colors.text.primary,
+        textAlign = TextAlign.End,
+        modifier = if (text == null) modifier.semantics { contentDescription = "未记录" } else modifier,
+    )
+}
+
+/**
+ * 逐组表格：组号靠左，表头和数据右对齐，不画外框、竖线和逐行横线。
+ * 系统字号放大后改成逐组竖排，不缩字、不横向滚动。
+ */
+@Composable
+private fun SetTableView(table: SetTable, modifier: Modifier = Modifier) {
+    val colors = ktColors
+    if (LocalDensity.current.fontScale > LARGE_FONT_SCALE) {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.control)) {
+            table.rows.forEachIndexed { index, row ->
+                Column(Modifier.semantics(mergeDescendants = true) {}) {
+                    Text("第 ${index + 1} 组", style = KtType.secondary, color = colors.text.secondary)
+                    table.columns.zip(row).forEach { (label, cell) ->
+                        Row(Modifier.padding(top = KtSpacing.Gap.related)) {
+                            Text(label, style = KtType.body, color = colors.text.secondary, modifier = Modifier.weight(1f))
+                            SetCell(cell)
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.control)) {
+        Row {
+            Text("组", style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.weight(INDEX_COLUMN_WEIGHT))
+            table.columns.forEach {
+                Text(it, style = KtType.secondary, color = colors.text.secondary, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
+            }
+        }
+        table.rows.forEachIndexed { index, row ->
+            Row(Modifier.semantics(mergeDescendants = true) {}) {
+                Text(
+                    "${index + 1}",
+                    style = KtType.body.tabular(),
+                    color = colors.text.secondary,
+                    modifier = Modifier.weight(INDEX_COLUMN_WEIGHT),
+                )
+                row.forEach { SetCell(it, Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+/**
+ * 一次称重。主区左边是体重，竖线右边竖排体脂率和 BMI；其余指标按组收在「展开指标」里，一项一行、数值靠右。
+ * 系统字号放大后主区改成上下排。只有体重时是一张紧凑卡，没有右栏、展开和 BIA 说明。
+ */
 @Composable
 private fun MeasurementCard(measurement: BodyMeasurement, modifier: Modifier = Modifier) {
     val colors = ktColors
     val groups = metricGroups(measurement.metrics)
-    val summary = groups.firstOrNull { it.title == null }
+    val summary = groups.firstOrNull { it.title == null }?.rows.orEmpty()
     val more = groups.filter { it.title != null }
+    val weight = measurement.metrics["weight_kg"]?.let { listOf(Reading(num(it), "kg")) }
+    val large = LocalDensity.current.fontScale > LARGE_FONT_SCALE
     var expanded by remember { mutableStateOf(false) }
 
     KtCard(modifier) {
@@ -472,67 +600,89 @@ private fun MeasurementCard(measurement: BodyMeasurement, modifier: Modifier = M
             style = KtType.sectionTitle,
             color = colors.text.primary,
         )
-        measurement.metrics["weight_kg"]?.let { weight ->
-            Row(
-                Modifier
-                    .padding(top = KtSpacing.Gap.related)
-                    .semantics(mergeDescendants = true) {},
-            ) {
-                Text(num(weight), style = KtType.metric, color = colors.text.primary, modifier = Modifier.alignByBaseline())
-                Text(
-                    "kg",
-                    style = KtType.body,
-                    color = colors.text.secondary,
-                    modifier = Modifier.alignByBaseline().padding(start = KtSpacing.Gap.related),
+        if (weight != null && summary.isNotEmpty() && !large) {
+            Row(Modifier.padding(top = KtSpacing.Gap.control).height(IntrinsicSize.Min)) {
+                LabeledReading("体重", weight, KtType.metric, Modifier.weight(0.6f))
+                Box(
+                    Modifier
+                        .padding(horizontal = KtSpacing.space4)
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(colors.separator.subtle),
                 )
+                Column(Modifier.weight(0.4f), verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.control)) {
+                    summary.forEach { LabeledReading(it.label, listOf(it.reading), KtType.title) }
+                }
             }
+        } else {
+            weight?.let { LabeledReading("体重", it, KtType.metric, Modifier.padding(top = KtSpacing.Gap.control)) }
+            summary.forEach { MetricLine(it) }
         }
-        if (summary != null) MetricGrid(summary.rows, Modifier.padding(top = KtSpacing.Gap.control))
 
         if (expanded) {
             for (group in more) {
                 Text(
                     group.title.orEmpty(),
-                    style = KtType.body.copy(fontWeight = FontWeight.SemiBold),
+                    style = KtType.sectionTitle,
                     color = colors.text.primary,
                     modifier = Modifier.padding(top = KtSpacing.Gap.group),
                 )
-                MetricGrid(group.rows, Modifier.padding(top = KtSpacing.Gap.related))
+                group.rows.forEachIndexed { index, row ->
+                    if (index > 0) RowDivider(inset = 0.dp)
+                    MetricLine(row)
+                }
             }
+        }
+        if (hasBiaMetrics(measurement.metrics)) {
+            Text(
+                "BIA 数值适合看趋势，不是医疗诊断。",
+                style = KtType.secondary,
+                color = colors.text.secondary,
+                modifier = Modifier
+                    .padding(top = KtSpacing.Gap.group)
+                    .fillMaxWidth()
+                    .clip(KtRadius.smallShape)
+                    .background(colors.surfaceSunken)
+                    .padding(KtSpacing.space3),
+            )
         }
         if (more.isNotEmpty()) {
-            CardDivider()
-            DisclosureRow(expanded = expanded, onToggle = { expanded = !expanded })
+            DisclosureRow(expanded = expanded, onToggle = { expanded = !expanded }, modifier = Modifier.padding(top = KtSpacing.Gap.control))
         }
     }
 }
 
-/** 两列「标签在上、值在下」；系统字号放大后改成单列，不缩字也不截断。 */
+/** 一项指标：名称在左，数值靠右；一行放不下时数值整个换到下一行，仍靠右，不截断。 */
 @Composable
-private fun MetricGrid(rows: List<Pair<String, String>>, modifier: Modifier = Modifier) {
+private fun MetricLine(row: MetricRow) {
     val colors = ktColors
-    val columns = if (LocalDensity.current.fontScale > 1.3f) 1 else 2
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.inline)) {
-        for (line in rows.chunked(columns)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(KtSpacing.Gap.inline)) {
-                for ((label, value) in line) {
-                    Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
-                        Text(label, style = KtType.secondary, color = colors.text.secondary)
-                        Text(value, style = KtType.body, color = colors.text.primary, modifier = Modifier.padding(top = KtSpacing.Gap.related))
-                    }
-                }
-                repeat(columns - line.size) { Spacer(Modifier.weight(1f)) }
-            }
-        }
+    val (value, unit) = row.reading
+    FlowRow(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = KtSpacing.Padding.controlY)
+            .semantics(mergeDescendants = true) {},
+        itemVerticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(row.label, style = KtType.body, color = colors.text.primary)
+        Text(
+            if (unit.isEmpty()) value else "$value $unit",
+            style = KtType.body.copy(fontWeight = FontWeight.Medium).tabular(),
+            color = colors.text.primary,
+            softWrap = false,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f).padding(start = KtSpacing.Gap.inline),
+        )
     }
 }
 
-/** 原地展开或收起，不是去另一页，所以不带 ›。 */
+/** 卡底居中的「展开指标 ⌄」。原地展开，不是去另一页，所以不用 ›。 */
 @Composable
-private fun DisclosureRow(expanded: Boolean, onToggle: () -> Unit) {
+private fun DisclosureRow(expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = ktColors
     val interaction = remember { MutableInteractionSource() }
-    Box(
-        Modifier
+    Row(
+        modifier
             .fillMaxWidth()
             .ktFocusRing(interaction, KtRadius.smallShape)
             .clip(KtRadius.smallShape)
@@ -544,8 +694,19 @@ private fun DisclosureRow(expanded: Boolean, onToggle: () -> Unit) {
             )
             .semantics { stateDescription = if (expanded) "已展开" else "已收起" }
             .defaultMinSize(minHeight = 48.dp),
-        contentAlignment = Alignment.CenterStart,
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(if (expanded) "收起指标" else "展开指标", style = KtType.body, color = ktColors.accent.text)
+        Text(if (expanded) "收起指标" else "展开指标", style = KtType.body, color = colors.accent.text)
+        Icon(
+            painter = painterResource(R.drawable.ic_chevron_right),
+            contentDescription = null,
+            tint = colors.accent.text,
+            modifier = Modifier
+                .padding(start = KtSpacing.Gap.related)
+                // 跟着系统字号放大，不然大字号下旁边的字很大、箭头还是一小点
+                .size(with(LocalDensity.current) { 16.sp.toDp() })
+                .rotate(if (expanded) -90f else 90f),
+        )
     }
 }

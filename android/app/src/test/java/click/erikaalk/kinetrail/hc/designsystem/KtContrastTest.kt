@@ -34,6 +34,12 @@ class KtColorContrastTest {
         }
     }
 
+    /** 普通卡片不画描边，只靠底色和画布分层（全局 2.5：低于 1.1:1 才要描边）。深色要拉开更多，暗处的明度差不显眼。 */
+    @Test
+    fun `卡片靠底色就能和画布分开`() = palettes.forEach { (mode, c) ->
+        assertAtLeast(if (c.isDark) 1.2 else 1.11, c.surface, c.canvas, "$mode surface 对 canvas")
+    }
+
     @Test
     fun `控件边界、强调边界与焦点达到 3 比 1`() = palettes.forEach { (mode, c) ->
         listOf(c.canvas, c.surface, c.surfaceElevated, c.surfaceSunken, c.fill.control).forEach {

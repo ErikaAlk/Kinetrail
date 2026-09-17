@@ -13,16 +13,22 @@ package click.erikaalk.kinetrail.hc.designsystem
  * - 浅色 accent 三态整体压深到白字达标（#00A3C2 → #007C94）：原值只能配墨字，
  *   主按钮文字会成为整页最黑的东西（1.5 视觉重量预算）。深色保持墨字。
  * - 深色 `accent.text` 与 `accent.primary` 原本同值，单独拉开一档。
+ * - 卡片靠底色和画布分层，不画描边（全局 2.5：低于 1.1:1 才要描边）。生成值两套都不够（浅 1.035、深 1.074），
+ *   深色下卡片融进画布。浅色画布改中性冷灰 #F0F3F4、卡片纯白（1.11:1）；深色卡片提到 #202527（1.25:1，iOS 分组列表约 1.23），
+ *   浮层、分隔线、按压填充、控件边界跟着提一档；深色 `text.secondary` #A6ACAE → #AAB0B2、`text.tertiary` #8E9496 → #939A9C，
+ *   让它们在提亮后的浮层和底栏合成色上仍达标。
+ * - `surfaceSunken` 浅 #EBF2F4 → #EBEEEF（跟画布一起去掉青色）、深 #050809 → #15191B：原值在新卡片里是一块纯黑，
+ *   像输入框。内嵌说明框改为落在画布和卡片之间，靠底色区分，不画描边。
  *
  * 启动图标沿用 `assets/icon.svg` 的 #00778F，它与浅色 accent.text 同一色相。
  */
 internal object KtPalette {
 
     object Light {
-        const val CANVAS = 0xFFF3FBFD.toInt()
-        const val SURFACE = 0xFFFBFEFF.toInt()
+        const val CANVAS = 0xFFF0F3F4.toInt()
+        const val SURFACE = 0xFFFFFFFF.toInt()
         const val SURFACE_ELEVATED = 0xFFFFFFFF.toInt()
-        const val SURFACE_SUNKEN = 0xFFEBF2F4.toInt()
+        const val SURFACE_SUNKEN = 0xFFEBEEEF.toInt()
         const val TEXT_PRIMARY = 0xFF14191B.toInt()
         const val TEXT_SECONDARY = 0xFF4E5455.toInt()
         const val TEXT_TERTIARY = 0xFF5C6264.toInt()
@@ -40,20 +46,20 @@ internal object KtPalette {
 
     object Dark {
         const val CANVAS = 0xFF090E10.toInt()
-        const val SURFACE = 0xFF121718.toInt()
-        const val SURFACE_ELEVATED = 0xFF1C2123.toInt()
-        const val SURFACE_SUNKEN = 0xFF050809.toInt()
+        const val SURFACE = 0xFF202527.toInt()
+        const val SURFACE_ELEVATED = 0xFF292E30.toInt()
+        const val SURFACE_SUNKEN = 0xFF15191B.toInt()
         const val TEXT_PRIMARY = 0xFFE6EDEF.toInt()
-        const val TEXT_SECONDARY = 0xFFA6ACAE.toInt()
-        const val TEXT_TERTIARY = 0xFF8E9496.toInt()
+        const val TEXT_SECONDARY = 0xFFAAB0B2.toInt()
+        const val TEXT_TERTIARY = 0xFF939A9C.toInt()
         const val TEXT_DISABLED = 0xFF606668.toInt()
         const val TEXT_INVERSE = 0xFF181A20.toInt()
-        const val SEPARATOR_SUBTLE = 0xFF252B2C.toInt()
-        const val SEPARATOR_STRONG = 0xFF393F40.toInt()
-        const val BORDER = 0xFF6C7375.toInt()
+        const val SEPARATOR_SUBTLE = 0xFF353B3D.toInt()
+        const val SEPARATOR_STRONG = 0xFF484E50.toInt()
+        const val BORDER = 0xFF7A8284.toInt()
         const val FILL_CONTROL = 0xFF191E20.toInt()
-        const val FILL_HOVER = 0xFF262B2D.toInt()
-        const val FILL_PRESSED = 0xFF323839.toInt()
+        const val FILL_HOVER = 0xFF303638.toInt()
+        const val FILL_PRESSED = 0xFF3B4244.toInt()
         const val SCRIM = 0xFF000000.toInt()
         const val SCRIM_ALPHA = 0.60f
     }

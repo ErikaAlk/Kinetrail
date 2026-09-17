@@ -1,6 +1,7 @@
 package click.erikaalk.kinetrail.hc.calendar
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,24 +51,28 @@ class CalendarDataTest {
     }
 
     @Test
-    fun `体测指标分组命名并带单位，体重不在组里`() {
+    fun `体测指标分组命名，数值和单位分开，体重不在组里`() {
         val day = range.days.getValue(LocalDate.of(2026, 9, 14))
         val measurement = day.measurements.single()
         assertEquals(22, measurement.measuredAt!!.hour)
         assertEquals(
             listOf(
-                MetricGroup(null, listOf("体脂率" to "19 %", "BMI" to "23.5")),
-                MetricGroup("脂肪", listOf("脂肪量" to "11.99 kg")),
-                MetricGroup("肌肉与骨骼", listOf("去脂体重" to "51.11 kg")),
+                MetricGroup(null, listOf(MetricRow("体脂率", Reading("19", "%")), MetricRow("BMI", Reading("23.5", "")))),
+                MetricGroup("脂肪", listOf(MetricRow("脂肪量", Reading("11.99", "kg")))),
+                MetricGroup("肌肉与骨骼", listOf(MetricRow("去脂体重", Reading("51.11", "kg")))),
             ),
             metricGroups(measurement.metrics),
         )
+        assertTrue(hasBiaMetrics(measurement.metrics))
     }
 
     @Test
-    fun `没见过的指标按原键名排在其他读数最后，不会丢`() {
+    fun `没见过的指标按原键名排在其他读数最后，不会丢，也不猜单位`() {
         val groups = metricGroups(mapOf("weight_kg" to 63.1, "zz_new_metric" to 7.0, "whr" to 0.82))
-        assertEquals(listOf(MetricGroup("其他读数", listOf("腰臀比" to "0.82", "zz_new_metric" to "7"))), groups)
+        assertEquals(
+            listOf(MetricGroup("其他读数", listOf(MetricRow("腰臀比", Reading("0.82", "")), MetricRow("zz_new_metric", Reading("7", ""))))),
+            groups,
+        )
     }
 
     @Test
@@ -78,41 +83,51 @@ class CalendarDataTest {
     }
 
     @Test
-    fun `逐组描述合并相同负重，有氧给时长和距离`() {
-        val day = range.days.getValue(LocalDate.of(2026, 9, 14))
-        val entries = day.sessions[1].entries
-        assertEquals(listOf("45 kg × 12、10"), describeSets(entries[0].sets))
-        assertEquals(listOf("20 分钟 · 3 km"), describeSets(entries[1].sets))
-
-        // 负重变了就另起一行；缺次数的组不编造次数
-        val mixed = listOf(
-            TrainingSet(loadValue = 45.0, loadUnit = "kg", reps = 12),
-            TrainingSet(loadValue = 45.0, loadUnit = "kg", reps = 12),
-            TrainingSet(loadValue = 50.0, loadUnit = "kg", reps = 8),
-            TrainingSet(loadValue = 50.0, loadUnit = "kg"),
-        )
-        assertEquals(listOf("45 kg × 12、12", "50 kg × 8", "50 kg"), describeSets(mixed))
-
-        // 负重组带了时长或距离时单独成行，不因合并丢字段
-        val timed = listOf(
-            TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12),
-            TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12, durationSeconds = 60),
-            TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12),
-        )
-        assertEquals(listOf("10 kg × 12", "10 kg · 12 次 · 1 分钟", "10 kg × 12"), describeSets(timed))
-
-        // 只有次数（负重单位不明）时合并成一段
-        val repsOnly = List(4) { TrainingSet(reps = 12) }
-        assertEquals(listOf("12、12、12、12 次"), describeSets(repsOnly))
-        assertEquals(listOf("1 组"), describeSets(listOf(TrainingSet())))
-        assertEquals(emptyList<String>(), describeSets(emptyList()))
+    fun `只有体重、BMI、心率这类非阻抗读数时不算 BIA`() {
+        assertFalse(hasBiaMetrics(mapOf("weight_kg" to 63.1, "bmi" to 22.0, "heart_rate_bpm" to 70.0, "zz_new_metric" to 1.0)))
+        assertTrue(hasBiaMetrics(mapOf("weight_kg" to 63.1, "body_water_pct" to 52.0)))
     }
 
     @Test
-    fun `会话抬头只列填了的项`() {
+    fun `逐组表格一组一行，只列填过的字段`() {
         val day = range.days.getValue(LocalDate.of(2026, 9, 14))
-        assertEquals(listOf("1 小时", "181 千卡", "RPE 7.5"), sessionSummary(day.sessions[1]))
-        assertEquals(listOf("1 小时"), sessionSummary(range.days.getValue(LocalDate.of(2026, 9, 16)).sessions[0]))
+        val entries = day.sessions[1].entries
+        assertEquals(SetTable(listOf("负重", "次数"), listOf(listOf("45 kg", "12"), listOf("45 kg", "10"))), setTable(entries[0].sets))
+        assertEquals(SetTable(listOf("时长", "距离"), listOf(listOf("20 分钟", "3 km"))), setTable(entries[1].sets))
+
+        // 同负重不再合并；带时长的那组多一列，别的组那格留空，字段不丢
+        val timed = listOf(
+            TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12),
+            TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12, durationSeconds = 90),
+        )
+        assertEquals(
+            SetTable(listOf("负重", "次数", "时长"), listOf(listOf("10 kg", "12", null), listOf("10 kg", "12", "1 分 30 秒"))),
+            setTable(timed),
+        )
+
+        // 只有次数时没有负重列；0 kg 照实写；没给单位不补 kg
+        assertEquals(SetTable(listOf("次数"), listOf(listOf("12"), listOf("10"))), setTable(listOf(TrainingSet(reps = 12), TrainingSet(reps = 10))))
+        assertEquals(listOf(listOf("0 kg", "15")), setTable(listOf(TrainingSet(loadValue = 0.0, loadUnit = "kg", reps = 15))).rows)
+        assertEquals(listOf(listOf("20")), setTable(listOf(TrainingSet(loadValue = 20.0))).rows)
+        assertEquals(SetTable(emptyList(), emptyList()), setTable(emptyList()))
+    }
+
+    @Test
+    fun `时长不换算小时也不舍秒，抬头统计缺项不占位`() {
+        assertEquals(listOf(Reading("77", "分钟")), durationReadings(4620))
+        assertEquals(listOf(Reading("1", "分"), Reading("30", "秒")), durationReadings(90))
+        assertEquals(listOf(Reading("45", "秒")), durationReadings(45))
+
+        val day = range.days.getValue(LocalDate.of(2026, 9, 14))
+        assertEquals(
+            listOf(
+                SessionStat("时长", listOf(Reading("60", "分钟"))),
+                SessionStat("消耗", listOf(Reading("181", "千卡"))),
+                SessionStat("RPE", listOf(Reading("7.5", ""))),
+            ),
+            sessionStats(day.sessions[1]),
+        )
+        assertEquals(listOf("时长"), sessionStats(range.days.getValue(LocalDate.of(2026, 9, 16)).sessions[0]).map { it.label })
     }
 
     @Test

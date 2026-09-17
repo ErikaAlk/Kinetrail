@@ -1,7 +1,6 @@
 package click.erikaalk.kinetrail.hc.designsystem.component
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +15,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import click.erikaalk.kinetrail.hc.designsystem.KtRadius
 import click.erikaalk.kinetrail.hc.designsystem.KtSpacing
 import click.erikaalk.kinetrail.hc.designsystem.KtType
@@ -83,7 +81,7 @@ fun PageTitle(
  * Card 是层级工具，不是装饰。规矩：
  * - 一张 Card 只承载一个语义组，不硬塞两组进去；
  * - 同层不许 Card 套 Card，单个开关或动作也不再包一层内层 Card；
- * - `surface` + `radius.large` + `separator.subtle` 描边、**无阴影**（描边的理由见 [cardSurface]）；
+ * - `surface` + `radius.large` + **无阴影**，靠背景差和组间距建立层级；
  * - 组内相邻行用 `separator.subtle`，从文字起始线开始画，不切穿外圆角；
  * - 同层连续超过 6 张 Card 就该考虑换成列表或分段页面。
  *
@@ -120,7 +118,8 @@ fun SettingsSection(
                         if (card) {
                             Modifier
                                 .padding(horizontal = KtSpacing.Padding.pageX)
-                                .cardSurface()
+                                .clip(KtRadius.largeShape)
+                                .background(colors.surface)
                         } else {
                             Modifier
                         },
@@ -181,7 +180,7 @@ fun SectionFooter(
 
 /**
  * 独立的一张 Card，给不是「行」的内容用（详情页的属性组、正文块这类）。
- * 规矩和 [SettingsSection] 的 Card 一样：surface、large 圆角、描边、无阴影、不嵌套。
+ * 规矩和 [SettingsSection] 的 Card 一样：surface、large 圆角、无阴影、不嵌套。
  */
 @Composable
 fun KtCard(
@@ -192,25 +191,12 @@ fun KtCard(
         modifier
             .fillMaxWidth()
             .padding(horizontal = KtSpacing.Padding.pageX)
-            .cardSurface()
+            .clip(KtRadius.largeShape)
+            .background(ktColors.surface)
             .padding(
                 horizontal = KtSpacing.cardPaddingX,
                 vertical = KtSpacing.Padding.container,
             ),
         content = content,
     )
-}
-
-/**
- * Card 的底：`surface` 填充加一圈 `separator.subtle`。
- *
- * 全局 2.5 规定普通 Surface 与 Canvas 对比度低于 1.1:1 时加这圈描边。本 App 两套都不够
- * （浅 1.035、深 1.074），深色下只靠背景差时卡片几乎融进画布，真机上看不出边界。
- */
-@Composable
-private fun Modifier.cardSurface(): Modifier {
-    val colors = ktColors
-    return clip(KtRadius.largeShape)
-        .background(colors.surface)
-        .border(1.dp, colors.separator.subtle, KtRadius.largeShape)
 }
