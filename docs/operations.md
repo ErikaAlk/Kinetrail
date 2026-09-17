@@ -2,7 +2,7 @@
 
 适用版本：0.1.0（Cloudflare Worker + D1 + OAuth Provider KV + Access OIDC）。本文命令均在仓库根目录执行，PowerShell / Bash 通用。
 
-> 2026-09-14 已完成首次部署第 1–7 步（含本人绑定与全部 secrets）；G1–G5 以末尾“验证记录”为准。每完成一项请在本文末尾“验证记录”补上日期与结论。
+> 本人实例 2026-09-14 完成服务端部署、本人绑定并连上 ChatGPT，2026-09-15 起体测改为手机推送；G1–G5 以末尾“验证记录”为准。每完成一项请在本文末尾“验证记录”补上日期与结论。从零部署一套新的按第 2 节。
 
 ## 0. 当前线上部署
 
@@ -10,14 +10,14 @@
 | --- | --- |
 | 账户 | `b721713d229cdf4266ab015cbb4c00da`（唯一账户） |
 | 入口 | `https://kinetrail.erikaalk.click`（Workers 自定义域名；`workers_dev`/`preview_urls` 关闭） |
-| D1 | `kinetrail` / `a5b20e9b-2531-4753-8c00-6774dfe93206`，已应用 `0001_init.sql` |
+| D1 | `kinetrail` / `a5b20e9b-2531-4753-8c00-6774dfe93206`，已应用 `0001_init.sql`、`0002_session_calories.sql` |
 | KV | `kinetrail-OAUTH_KV` / `30800a8f19c0417aac3121f080ba8850` |
 | Access for SaaS | 应用 `Kinetrail`（`d97f5f5e-172c-4443-b65f-0b0e863449d6`），IdP 邮箱验证码，策略“邮箱白名单”（与 dsh 相同的两个邮箱），PKCE + client secret |
-| 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY`、`FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION` |
+| 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY`、`HC_INGEST_TOKEN_SHA256`，以及留作备用的 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（第 9 节末尾） |
 | 本人绑定 | `OWNER_OIDC_SUB` 已写入 vars（邮箱验证码登录得到的 sub；换登录邮箱会得到不同 sub，需重新绑定） |
 | 成员范围 | `PROFILE_ALLOWLIST` = `p_914ea14c79915f2f`（FitDays 成员 Erika）；同一账户下其他 5 个成员与无 suid 的记录不落库，历史数据已于 2026-09-15 物理删除 |
 | 定时调度 | Durable Object `SyncScheduler`（SQLite 存储，实例名 `scheduler`）的 alarm 每 10 分钟执行一次；本账户 cron 触发器注册成功但从不投递，`*/10` 仍保留 |
-| 同步方式 | `PERIODIC_SYNC=off`：只在 `refresh_data` 排队后由调度执行，不再每 6 小时自动登录。FitDays/FitDays+ 同一账号只保留最后一次登录，每次同步都会把手机 App 顶下线（`research/FITDAYSPLUS.md`）。**分支 `feat/hc-reader` 部署后改为手机经 Health Connect 推送、`refresh_data` 下线，见第 9 节** |
+| 同步方式 | `PERIODIC_SYNC=off`：只在 `refresh_data` 排队后由调度执行，不再每 6 小时自动登录。FitDays/FitDays+ 同一账号只保留最后一次登录，每次同步都会把手机 App 顶下线（`research/FITDAYSPLUS.md`）。现在体测由手机经 Health Connect 推送，`refresh_data` 已下线，见第 9 节 |
 | 迁移前书签 | D1 Time Travel `00000070-00000000-000050e7-47b4260ff4c6485eb503dca7bbd6e030`（2026-09-15T04:09Z，FitDays→FitDays+ 迁移前） |
 
 ## 1. 组成与数据边界
@@ -32,60 +32,135 @@
 
 对 FitDays 只调用 `/api/users/login` 与 `/api/sync/syncFromServer`，没有任何写入或删除路径。
 
-## 2. 首次部署
+## 2. 从零部署
 
-以下步骤会创建云资源并对外暴露 HTTPS 端点，执行前确认账户与域名。
+在自己的 Cloudflare 账户里部署一套全新的 Kinetrail，连上 ChatGPT 和手机。按 2.1 到 2.9 的顺序做。
 
-1. 登录并创建资源：
+- 一套部署只存一个人的数据。给别人用就让他另部署一套，不要把别人的称重推进你的实例。
+- 第 0 节和仓库里 `wrangler.jsonc` 的值都是本人实例的，新部署要全部换成自己的。
+- 这些步骤会创建云资源并对外暴露 HTTPS 端点，执行前确认账户和域名。
 
-   ```bash
-   npx wrangler login
-   npx wrangler d1 create kinetrail
-   npx wrangler kv namespace create OAUTH_KV
-   ```
+### 2.1 准备
 
-   把输出的 `database_id` 与 KV `id` 替换进 `wrangler.jsonc` 的占位值，然后 `npm run types`。
+| 需要 | 说明 |
+| --- | --- |
+| Cloudflare 账户 | 必须已经有 workers.dev 子域（在 Workers 页面设置一次即可）。没有的话部署时 cron 触发器报 10063，只部分生效；本 Worker 关闭了 workers.dev 也一样 |
+| 域名 | Worker 只走自定义域名（`wrangler.jsonc` 的 `routes`，`custom_domain: true`），这个域名要托管在同一个 Cloudflare 账户里 |
+| Cloudflare Zero Trust | 登录靠 Access for SaaS，需要先开通 Zero Trust 组织（团队域名形如 `<team>.cloudflareaccess.com`） |
+| 电脑 | Node ≥ 22.12；构建手机 App 另需 Android Studio 自带的 JDK 和 Android SDK（`android/README.md`「构建」） |
+| 手机 | Android，带 Health Connect，装有 FitDays+ 并在 FitDays+ 里打开写入 Health Connect。用小米体脂秤 S800 的先看 `docs/xiaomi-s800.md`，目前还不能直接用 |
+| ChatGPT | 能打开 Developer mode 的账户（2.7） |
 
-   账户必须已有 workers.dev 子域（本账户为 `erikaalk`），否则部署时 cron 触发器报 10063、只部分生效；即使本 Worker 关闭了 `workers_dev` 也一样。
+### 2.2 取代码，创建 D1 和 KV
 
-2. 设置 vars：`PUBLIC_ORIGIN` 改为实际 HTTPS 源（例如 `https://kinetrail.<子域>.workers.dev`，不带尾斜杠）；`OWNER_ID` 保持稳定（改了会让已有数据“换主人”）；`FITDAYS_HISTORY_START` 设为账户最早测量之前的日期。
+```bash
+npm ci
+npx wrangler login
+npx wrangler d1 create kinetrail
+npx wrangler kv namespace create OAUTH_KV
+```
 
-3. Cloudflare Access for SaaS（OIDC）：Zero Trust → Access controls → Applications → Create new application → SaaS application → 自定义名称 → OIDC。
-   - Redirect URL：`<PUBLIC_ORIGIN>/callback`
-   - 开启 PKCE（Kinetrail 始终发送 S256 challenge）
-   - Access policy 只允许你本人
-   - 复制 Client ID、Client secret、Issuer、Authorization endpoint、Token endpoint、Key endpoint(JWKS) 到对应 vars / secret
-   参考：[Secure MCP servers](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/secure-mcp-servers/)、[Generic OIDC SaaS](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/saas-apps/generic-oidc-saas/)
+把输出的 `database_id` 和 KV 的 `id` 替换进 `wrangler.jsonc`。
 
-4. 写入 secrets（交互输入，值不会出现在命令行）：
+### 2.3 改 `wrangler.jsonc`
 
-   ```bash
-   npx wrangler secret put ACCESS_CLIENT_SECRET
-   npx wrangler secret put CURSOR_SIGNING_KEY
-   npx wrangler secret put FITDAYS_LOGIN
-   npx wrangler secret put FITDAYS_PASSWORD
-   npx wrangler secret put FITDAYS_REGION
-   ```
+`routes` 里的 `pattern` 改成你的域名，然后逐项改 `vars`：
 
-   `CURSOR_SIGNING_KEY` 至少 32 字符的随机串；`FITDAYS_REGION` 为 `cn`。
+| 变量 | 新部署填什么 |
+| --- | --- |
+| `PUBLIC_ORIGIN` | `https://<你的域名>`，不带尾斜杠，和 `routes` 一致 |
+| `OWNER_ID` | 保持 `owner`。部署后不要再改，改了已有数据会“换主人” |
+| `ACCESS_OIDC_ISSUER`、`ACCESS_OIDC_AUTHORIZATION_ENDPOINT`、`ACCESS_OIDC_TOKEN_ENDPOINT`、`ACCESS_OIDC_JWKS_URL`、`ACCESS_CLIENT_ID` | 2.4 建好 Access 应用后填 |
+| `OWNER_OIDC_SUB` | 先改成空字符串 `""`，2.7 再填 |
+| `HC_ACCEPT_AFTER` | 只接收晚于这个时刻的称重。新库没有旧数据时，填一个早于你想导入的第一次称重的时间，比如部署当天零点 `2026-09-17T00:00:00+08:00`。App 首次同步最多读回最近 30 天 |
+| `HC_PROFILE_REF` | 体测记在哪个成员名下。新库还没有成员，可以自己取一个，建议 `p_` 加 16 位随机十六进制；第一次推送时会建这个成员。之后不要改：库里已有成员时写错，推送会返回 503 |
+| `HC_HEIGHT_CM` | 你的身高（cm），用来推算 BMI |
+| `PERIODIC_SYNC` | 保持 `off` |
+| `PROFILE_ALLOWLIST` | 只影响 FitDays 拉取，目前没有入口会触发。不用 FitDays 就填 `""`，不要照抄本人实例的成员 id |
+| `FITDAYS_HISTORY_START` | 只给 FitDays 拉取用，保持原值 |
 
-5. 迁移与发布：
+改完运行 `npm run types`。
 
-   ```bash
-   npm run check
-   npx wrangler d1 migrations apply kinetrail --remote
-   npx wrangler deploy
-   ```
+### 2.4 Cloudflare Access for SaaS（OIDC）
 
-6. 绑定本人身份：`OWNER_OIDC_SUB` 先留空部署一次，浏览器打开 ChatGPT 连接流程（或直接访问 `/authorize` 的完整请求），用 Access 登录后页面会显示**你自己的** `sub`，此时不会签发任何授权。确认后写入 `OWNER_OIDC_SUB` 并重新 `wrangler deploy`。
+Zero Trust → Access controls → Applications → Create new application → SaaS application → 自定义名称 → OIDC。
 
-7. 冒烟：`/healthz` 返回 `{"status":"alive"}`；匿名 `POST /mcp` 返回 401 且带 `resource_metadata`；`/.well-known/oauth-authorization-server` 只列 `S256`。
+- Redirect URL：`<PUBLIC_ORIGIN>/callback`
+- 开启 PKCE（Kinetrail 始终发送 S256 challenge）
+- 登录方式按自己的情况选，本人实例用邮箱验证码
+- Access policy 只允许你本人的邮箱
+- 把 Client ID、Issuer、Authorization endpoint、Token endpoint、Key endpoint (JWKS) 填进 2.3 对应的 vars；Client secret 在 2.5 写成 secret
+
+参考：[Secure MCP servers](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/secure-mcp-servers/)、[Generic OIDC SaaS](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/saas-apps/generic-oidc-saas/)
+
+### 2.5 写入 secrets
+
+```bash
+npx wrangler secret put ACCESS_CLIENT_SECRET
+node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))" | npx wrangler secret put CURSOR_SIGNING_KEY
+```
+
+- `ACCESS_CLIENT_SECRET` 交互输入，值不会出现在命令行。`CURSOR_SIGNING_KEY` 至少 32 个字符，第二行直接生成随机值并经管道写入，不会显示出来。
+- `HC_INGEST_TOKEN_SHA256` 要和手机一起设，放在 2.9。
+- `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION` 只有将来要恢复 FitDays 拉取才需要（第 9 节末尾），新部署不用设。
+
+### 2.6 迁移、发布、冒烟
+
+```bash
+npm run check
+npx wrangler d1 migrations apply kinetrail --remote
+npx wrangler deploy
+```
+
+迁移命令会应用 `migrations/` 下所有还没应用的迁移（目前是 `0001_init.sql`、`0002_session_calories.sql`）。Durable Object `SyncScheduler` 随部署自动创建，不用手动操作。
+
+冒烟：`<PUBLIC_ORIGIN>/healthz` 返回 `{"status":"alive"}`；匿名 `POST /mcp` 返回 401 且带 `resource_metadata`；`/.well-known/oauth-authorization-server` 只列 `S256`。
+
+### 2.7 连接 ChatGPT，绑定本人身份
+
+ChatGPT 的菜单名称按 OpenAI 文档 [Connect and test your plugin](https://developers.openai.com/plugins/deploy/connect-chatgpt) 写（2026-09-17 核对），界面改版时以文档为准。
+
+1. **打开 Developer mode**：ChatGPT → Settings → Security and login → 打开 Developer mode。普通个人账户自己就能打开。Business、Enterprise 工作区要看工作区策略，管理员没有放开时个人设置里没有这个开关，需要找管理员。
+2. **添加插件**：打开 [chatgpt.com/plugins](https://chatgpt.com/plugins) → 加号 → 填名字（比如 Kinetrail）和描述 → Connection 选 Public endpoint，URL 填 `<PUBLIC_ORIGIN>/mcp` → 创建。要选认证方式时选 OAuth。Kinetrail 用 CIMD 识别客户端（`src/index.ts` 的 `clientIdMetadataDocumentEnabled`），不需要预先注册客户端。
+3. **第一次登录，拿到 sub**：ChatGPT 会跳到 Cloudflare Access 登录。因为 `OWNER_OIDC_SUB` 还是空的，登录后页面显示「Kinetrail 尚未绑定本人身份」和当前登录身份的 sub，这时不会签发任何授权。确认是自己登录的，把这个 sub 填进 `wrangler.jsonc` 的 `OWNER_OIDC_SUB`，再 `npx wrangler deploy`。以后要一直用同一个登录方式和邮箱，换邮箱登录得到的 sub 不同。
+4. **正式授权**：回 ChatGPT 重新连接，再登录一次，出现「授权连接 Kinetrail」页面：
+   - 核对「授权后将跳转到」是 ChatGPT 的地址。「客户端自报名称」谁都能填，只作参考。
+   - 第一次只申请 `body:read`、`workout:read` 两个只读权限。
+   - 点「授权」，回到 ChatGPT 后看一眼工具列表是否正常。
+5. **写入权限**：只读授权下，模型第一次写训练会被拒（`INSUFFICIENT_SCOPE`），ChatGPT 会引导重新授权。授权页这次多出 `workout:write`，同意后同一次写入就能成功（2026-09-15 实测，见验证记录）。
+6. **建项目**：在 ChatGPT 里新建一个项目（本人的叫「减肥计划」），把 `MCP_CONTRACT.md` 第 6 节的 instructions 粘到项目设置里。那段文字写的是本人的名字、身高 164 cm 和 FitDays+ 的称重方式，要改成自己的情况。
+7. **在对话里用**：新对话里点输入框的加号菜单，选 Developer mode，再勾上 Kinetrail。
+8. **改了工具以后**：部署新版本后，按 OpenAI 文档在 chatgpt.com/plugins 打开这个连接点 Refresh，确认工具说明已经更新，再开新对话。本人在 Business 工作区里 Refresh 不生效，只能删除插件、重新添加、重新授权（第 4 节第 3 步）；普通个人账户上 Refresh 是否可靠未实测。两种情况都以结果为准：查 D1 里新字段有没有写进去。
+
+授权页的报错：
+
+| 页面提示 | 原因 | 处理 |
+| --- | --- | --- |
+| 身份提供方尚未配置（503） | `ACCESS_OIDC_*`、`ACCESS_CLIENT_ID` 或 `ACCESS_CLIENT_SECRET` 缺失，或端点不是 https | 补齐后重新部署 |
+| Kinetrail 尚未绑定本人身份（403） | `OWNER_OIDC_SUB` 为空 | 按第 3 步绑定 |
+| 当前登录的身份无权连接 Kinetrail（403） | 登录身份的 sub 和 `OWNER_OIDC_SUB` 不同，常见原因是换了邮箱 | 用绑定时的邮箱登录，或按第 3 步重新绑定 |
+| 授权请求无效或已过期 / 授权会话无效或已过期（400） | 登录超过 10 分钟没完成、授权页停留超过 5 分钟，或浏览器丢了 cookie | 回 ChatGPT 重新连接 |
+| 请求过于频繁（429） | `/authorize` 每个 IP 每分钟 10 次 | 等一分钟再试 |
+
+### 2.8 手机 App
+
+1. **改服务端地址**：App 连哪台服务器写死在 `android/app/src/main/java/click/erikaalk/kinetrail/hc/HealthSync.kt` 的 `KINETRAIL_ORIGIN`（推送和日历共用），改成你的 `PUBLIC_ORIGIN`。
+2. **构建、安装**：按 `android/README.md`「构建」「安装」两节。手机直插电脑，不要经过 USB 集线器。
+3. **授权读取**：打开身迹，底栏「同步」→「读取权限」，把 7 项都授权。
+
+### 2.9 推送令牌，第一次同步
+
+1. 按第 9 节「生成并保存令牌」：生成令牌，把哈希写成 `HC_INGEST_TOKEN_SHA256`，再在手机上身迹「设置」→「推送令牌」里保存。保存后 App 立刻同步一次。
+2. 按第 9 节「日常」称一次：先打开 FitDays+ 的测量页再上秤，看到测量动画才会写进 Health Connect。然后打开身迹。
+3. 检查：第 9 节「检查」的 SQL 能看到 `health_connect` 批次是 published；身迹的「记录」页能看到这次称重；ChatGPT 里问最近一次体重能答上来。
+
+之后按第 3 节做上线验收。
 
 ## 3. 上线验收关卡（未通过前不得称为生产可用）
 
 | 关卡 | 做法 | 通过标准 |
 | --- | --- | --- |
-| G3 真实 OAuth | ChatGPT 设置 → Security and login → Developer mode → Plugins 添加 `<PUBLIC_ORIGIN>/mcp`；复制界面给出的回调地址核对 CIMD；分别测试拒绝授权、scope 不足时的重新授权、撤销 | 只有本人能授权；token 过期/撤销后 401；只读 token 调写工具得到 `INSUFFICIENT_SCOPE` 与重新授权提示；日志无 token/code |
+| G3 真实 OAuth | 按 2.7 连接 ChatGPT；核对授权页显示的回调地址；分别测试拒绝授权、scope 不足时的重新授权、撤销 | 只有本人能授权；token 过期/撤销后 401；只读 token 调写工具得到 `INSUFFICIENT_SCOPE` 与重新授权提示；日志无 token/code |
 | G1 真实 CN | 授权 `body:sync` 后调用 `refresh_data`，再 `get_sync_status` | 见下方 SQL；state 为 published 或 partial 且原因明确；无秘密落库 |
 | G2 容量与恢复 | 首次全量耗时、CPU、D1 行数/大小；按第 5 节完成一次加密备份与隔离恢复 | 未触发 Worker/D1 限额；恢复校验全部为 0 |
 | G4/G5 “减肥计划”项目 | 按 MCP_CONTRACT 第 6 节写入项目 instructions；聊天 A 记录/纠错/结束，聊天 B 查询 | B 不粘贴 A 内容也能读回同一 session/event/revision；计划类表达未写入 |
