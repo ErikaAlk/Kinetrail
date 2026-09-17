@@ -17,7 +17,9 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.lifecycle.lifecycleScope
+import click.erikaalk.kinetrail.hc.calendar.CalendarRange
 import click.erikaalk.kinetrail.hc.calendar.fetchCalendar
+import click.erikaalk.kinetrail.hc.calendar.parseCalendar
 import click.erikaalk.kinetrail.hc.report.recognizeReport
 import click.erikaalk.kinetrail.hc.report.toIngestJson
 import click.erikaalk.kinetrail.hc.ui.AppActions
@@ -26,8 +28,11 @@ import click.erikaalk.kinetrail.hc.ui.KinetrailApp
 import click.erikaalk.kinetrail.hc.ui.ReportState
 import click.erikaalk.kinetrail.hc.ui.Screen
 import click.erikaalk.kinetrail.hc.ui.UploadState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -93,7 +98,8 @@ class MainActivity : ComponentActivity(), AppActions {
 
     override fun navigate(screen: Screen) {
         state.screen = screen
-        // 记录页：当月数据还没取到（首次进入、上次失败、或换过月份）才发请求；已经取到就保留上次选中的日期。
+        // 记录页：当月还没有可用数据（冷启动后首次进入、上次失败且本机没有这个月）才发请求；
+        // 已经有就原样保留，连同上次选中的日期，要新数据点月份旁的刷新。
         if (screen == Screen.Records && state.calendarLoadedMonth != state.month) showMonth(state.month)
     }
 
@@ -128,29 +134,37 @@ class MainActivity : ComponentActivity(), AppActions {
         state.selectedDate = if (state.selectedDate == date) null else date
     }
 
-    /** 只读服务端日历。晚回来的旧请求不覆盖新结果（同 [openReport] 的做法）。 */
+    /**
+     * 只读服务端日历。屏幕上已经是这个月时，刷新期间照常显示，取回来再整体替换；
+     * 换到别的月份（含冷启动）先摆出上次存在本机的那份。失败时本机那份留着。
+     * 晚回来的旧请求不覆盖新结果（同 [openReport] 的做法）。
+     */
     private fun loadCalendar(month: YearMonth) {
         val attempt = ++calendarAttempt
         val token = TokenStore.load(prefs)
-        state.calendarDays = emptyMap()
-        state.calendarTruncated = false
-        state.calendarLoadedMonth = null
-        if (token == null) {
-            state.calendarLoading = false
-            state.calendarError = "保存推送令牌后才能读取日历。"
-            return
-        }
-        state.calendarLoading = true
-        state.calendarError = null
+        state.calendarLoading = token != null
+        state.calendarError = if (token == null) "保存推送令牌后才能读取日历" else null
         lifecycleScope.launch {
+            if (state.calendarLoadedMonth != month) {
+                val cached = withContext(Dispatchers.IO) {
+                    runCatching { parseCalendar(calendarFile(month).readText()) }.getOrNull()
+                }
+                if (attempt != calendarAttempt) return@launch
+                showCalendar(month, cached)
+            }
+            if (token == null) return@launch
             val result = runCatching { fetchCalendar(token, month) }
             if (attempt != calendarAttempt) return@launch
             state.calendarLoading = false
             result
-                .onSuccess {
-                    state.calendarDays = it.days
-                    state.calendarTruncated = it.truncated
-                    state.calendarLoadedMonth = month
+                .onSuccess { (json, range) ->
+                    showCalendar(month, range)
+                    // 先写临时文件再改名，写到一半被杀也不会留下半份
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            File(cacheDir, "calendar-$month.json.tmp").apply { writeText(json) }.renameTo(calendarFile(month))
+                        }
+                    }
                 }
                 .onFailure {
                     state.calendarError =
@@ -158,6 +172,16 @@ class MainActivity : ComponentActivity(), AppActions {
                 }
         }
     }
+
+    /** [range] 为 null 表示这个月本机和服务端都还没有可用数据。 */
+    private fun showCalendar(month: YearMonth, range: CalendarRange?) {
+        state.calendarDays = range?.days.orEmpty()
+        state.calendarTruncated = range?.truncated == true
+        state.calendarLoadedMonth = month.takeIf { range != null }
+    }
+
+    /** 每个月一份服务端原文。放应用缓存目录：App 不开备份，系统空间紧张时可以清掉，清了只是下次先空着。 */
+    private fun calendarFile(month: YearMonth) = File(cacheDir, "calendar-$month.json")
 
     /** 协程里的异常必须接住，否则界面停在“同步中”且没有提示。结果写进 prefs，下次打开还能看到。 */
     private suspend fun runSync() {

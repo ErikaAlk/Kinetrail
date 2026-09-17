@@ -16,11 +16,14 @@ import java.time.ZoneId
 
 private const val ENDPOINT = "$KINETRAIL_ORIGIN/app/calendar"
 
-/** 取一个月（含首尾整月）的训练与体测。失败抛 [PushException]，消息直接给界面看。 */
-suspend fun fetchCalendar(token: String, month: YearMonth, zone: ZoneId = ZoneId.systemDefault()): CalendarRange =
+/**
+ * 取一个月（含首尾整月）的训练与体测，返回服务端原文和解析结果；原文给调用方原样存进本机缓存。
+ * 失败抛 [PushException]，消息直接给界面看。
+ */
+suspend fun fetchCalendar(token: String, month: YearMonth, zone: ZoneId = ZoneId.systemDefault()): Pair<String, CalendarRange> =
     fetchCalendar(token, month.atDay(1), month.atEndOfMonth(), zone)
 
-suspend fun fetchCalendar(token: String, from: LocalDate, to: LocalDate, zone: ZoneId): CalendarRange =
+suspend fun fetchCalendar(token: String, from: LocalDate, to: LocalDate, zone: ZoneId): Pair<String, CalendarRange> =
     withContext(Dispatchers.IO) {
         val url = URL("$ENDPOINT?from=$from&to=$to&tz=$zone")
         val connection = url.openConnection() as HttpURLConnection
@@ -45,7 +48,7 @@ suspend fun fetchCalendar(token: String, from: LocalDate, to: LocalDate, zone: Z
                     },
                 )
             }
-            parseCalendar(text)
+            text to parseCalendar(text)
         } finally {
             connection.disconnect()
         }
