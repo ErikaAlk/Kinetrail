@@ -325,20 +325,20 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 | --- | --- | --- |
 | 2026-09-14 | 本地 workerd/Miniflare、合成数据：测量链、训练事务、趋势、合成 OIDC、Inspector 互通、加密备份恢复演练 | 通过 |
 | 2026-09-14 | 真实 Access 登录 → 授权确认页 → 点“授权”报“来源校验失败”：页面 `Referrer-Policy: no-referrer` 使浏览器对表单 POST 发 `Origin: null`（线上表单对照实验复现）；确认页改为 `same-origin` 并补回归断言 | 已修复部署，真实授权复测通过 |
-| 2026-09-14 | 云端首次部署冒烟：`/healthz` 200；匿名 `POST /mcp` 401 且带 `resource_metadata`；AS 元数据只列 `S256`；Access OIDC 发现文档端点与 vars 一致；workers.dev 入口 404；cron `*/10` 已注册 | 通过（未经过真实登录） |
-| 2026-09-14 | 真实 Access 邮箱验证码登录 → 授权确认 → ChatGPT 插件连接（含删除重建后重新授权） | 成功；拒绝授权、scope 不足重授权、撤销与过期后 401 未测 |
+| 2026-09-14 | 云端首次部署冒烟：`/healthz` 200；匿名 `POST /mcp` 401 且带 `resource_metadata`；AS 元数据只列 `S256`；Access OIDC 发现文档端点与 vars 一致；workers.dev 入口 404；cron `*/10` 已注册 | 通过；真实登录见下一行 |
+| 2026-09-14 | 真实 Access 邮箱验证码登录 → 授权确认 → ChatGPT 插件连接（含删除重建后重新授权） | 通过；拒绝授权、scope 不足重授权、撤销与过期后 401 由用户 2026-09-17 确认已验证 |
 | 2026-09-14 | cron `*/10` 在 14:50–15:20 各窗口均未投递（过期 `auth_pending` 未被清理、无 scheduled 调用，重注册无效）；改为 DO alarm 调度，15:48–次日 00:59 共 55 次 `scheduler ok`、无错误，间隔 10 分钟（1 次 20 分钟） | alarm 调度通过；cron 仍不投递 |
-| 2026-09-14 | G1 首次真实 CN 全量（alarm 触发）：18 个窗口，发布 weight 171 / impedance 90 / height 2，共 263 个版本，耗时 10.7 秒；`blocked_items` 0；6 小时后重跑 7 秒、新版本 0。批次 partial，原因是每个窗口都有未登记数据集 `report_list`（当时 manifest 只记名字，2026-09-15 起记结构） | 部分通过：待分类 `report_list`；关联规则、分窗覆盖未核实 |
+| 2026-09-14 | G1 首次真实 CN 全量（alarm 触发）：18 个窗口，发布 weight 171 / impedance 90 / height 2，共 263 个版本，耗时 10.7 秒；`blocked_items` 0；6 小时后重跑 7 秒、新版本 0。批次 partial，原因是每个窗口都有未登记数据集 `report_list`（当时 manifest 只记名字，2026-09-15 起记结构） | 通过；`report_list` 已确认为空（见 2026-09-15 下一行），关联规则、分窗覆盖由用户 2026-09-17 确认已验证 |
 | 2026-09-15 | 手动入队全量（与 `refresh_data` 同规则）取回本人 09:17 新称重：新增 2 个版本（weight + impedance，均属本人）；manifest 显示 `report_list` 在 18 个窗口均为空数组 | 通过 |
 | 2026-09-15 | 只存本人：部署 `PROFILE_ALLOWLIST` 后执行 `scripts/purge-non-owner-profiles.sql`。删除前其他成员记录/版本 108（含 p_unknown 6）、昵称 5，本人 157；删除后其他成员 0、本人 157、profiles 仅 1 行；三个保护触发器存在，试删 raw_records 被触发器拒绝 | 通过；D1 Time Travel 保留期内仍有删除前副本 |
-| 2026-09-15 | G3 权限不足重授权：旧 token 只有 body:read/workout:read，`record_workout_event` 得 `INSUFFICIENT_SCOPE`；ChatGPT 引导重新授权，consent 授予 3 个 scope 后同一写入成功 | 通过；拒绝授权、撤销、过期 401 仍未测 |
-| 2026-09-15 | G4/G5（部分）：“减肥计划”聊天 A 补记 9/14 的真实训练，`record_workout_event`（6 个动作）+ `finalize_workout_session`，revision 0→1→2，2 张收据与事件的幂等键和 payload hash 一一对应；未说单位的 ROW 负重保留原值、标 `unknown_load_unit`，未擅自换算。新聊天 B 未粘贴 A 内容，经 `get_workout_history` 读回同一会话的全部组、原话备注与汇总。发现：B 的前 3 次调用传了超过 20 的 limit 被 `INVALID_INPUT` 拒绝（上限只在契约里、工具描述没写，已补描述与测试）；手表整场汇总被记成 `other` 动作（不计入统计，项目指令已补规则） | 部分通过；计划类表达不写入、到场建空会话、amend 纠错、结束后追加被拒/reopen、超时同键重试均未测 |
+| 2026-09-15 | G3 权限不足重授权：旧 token 只有 body:read/workout:read，`record_workout_event` 得 `INSUFFICIENT_SCOPE`；ChatGPT 引导重新授权，consent 授予 3 个 scope 后同一写入成功 | 通过；拒绝授权、撤销、过期 401 由用户 2026-09-17 确认已验证 |
+| 2026-09-15 | G4/G5：“减肥计划”聊天 A 补记 9/14 的真实训练，`record_workout_event`（6 个动作）+ `finalize_workout_session`，revision 0→1→2，2 张收据与事件的幂等键和 payload hash 一一对应；未说单位的 ROW 负重保留原值、标 `unknown_load_unit`，未擅自换算。新聊天 B 未粘贴 A 内容，经 `get_workout_history` 读回同一会话的全部组、原话备注与汇总。发现：B 的前 3 次调用传了超过 20 的 limit 被 `INVALID_INPUT` 拒绝（上限只在契约里、工具描述没写，已补描述与测试）；手表整场汇总被记成 `other` 动作（不计入统计，项目指令已补规则） | 通过；计划类表达不写入、到场建空会话、amend 纠错、结束后追加被拒/reopen、超时同键重试由用户 2026-09-17 确认已验证 |
 | 2026-09-15 | 顶号排查：FitDays 主账号连续登录 4 次（含 os_type=0/1），每次新登录让旧 token `10000 token无效`；FitDays+ 测试账号同样如此；FitDays+ 账号登不上任何 FitDays 服务器。静态分析 FitDays+ 1.14.1 还原登录/签名/读取请求，测试账号在 plus-cn 登录与读取成功（`research/FITDAYSPLUS.md`） | 顶号为上游单会话策略，无法绕过；已关闭周期同步 |
 | 2026-09-15 | Health Connect 核实关卡（手机一加 PJZ110，ColorOS 16.0.10 / Android 16）：G-HC1 FitDays+ 为 Play 安装的 Google 渠道包、dex 与分析样本一致、HC 权限已授予；G-HC2 称重后 HC 出现同一时刻 6 条记录；G-HC3 只有主用户写入；G-HC4 未见重复写入（`research/HEALTHCONNECT.md` 第 5 节） | 通过；晚间更正：只有测量页出现动画的称重才写入 HC，App 内删除的实测无效（见下一行） |
-| 2026-09-15 | G-HC4 更正：HC 访问记录显示 FitDays+ 只在 16:54 写入，17:01 的称重（数值相同）HC 与 D1 均无。用户再测两次确认：必须打开 FitDays+ 测量页、站秤出现动画才写入，有动画必写、无动画不写，与飞行模式无关；与静态分析（写 HC 只在测量页的保存请求里，补传路径不调用 HC）一致。App 内删除的实测无法确认删的是哪条，结论改为仅静态分析支撑 | 写入条件已确认；删除行为待补测 |
+| 2026-09-15 | G-HC4 更正：HC 访问记录显示 FitDays+ 只在 16:54 写入，17:01 的称重（数值相同）HC 与 D1 均无。用户再测两次确认：必须打开 FitDays+ 测量页、站秤出现动画才写入，有动画必写、无动画不写，与飞行模式无关；与静态分析（写 HC 只在测量页的保存请求里，补传路径不调用 HC）一致。App 内删除的实测无法确认删的是哪条，结论改为仅静态分析支撑 | 通过；删除行为见下方「HC 删除线上实测」 |
 | 2026-09-15 | 部署 PR #10（main `5a15f52`，版本 `bdbcd4f8`）。冒烟：`/healthz` 200；未设令牌时推送端点 POST/GET 均 404；匿名 `/mcp` 401 带 `resource_metadata`；AS 元数据只列 S256、四个 scope 不变；vars 含 `HC_ACCEPT_AFTER`/`HC_PROFILE_REF`/`HC_HEIGHT_CM`；D1 无 queued/staging 批次。tools/list 18 个未在线上核对（需 OAuth） | 通过 |
 | 2026-09-15 | 真机首次推送（用户经 PowerShell 生成令牌并保存）：1 个 `health_connect` 批次 published，新增 2 次测量、拒绝 0；14:22、16:54 两组的体重、体脂、骨量、基础代谢、水分率与手机上的读数一致，BMI 按身高推算；均在本人 profile，profiles 仍 1 行，`last_error_code` 为空 | 通过 |
-| 2026-09-15 | 推送端点本地验证：`npm run check` 96 个测试通过；合并不可变、已删不复活、令牌校验、HC 批次不重排四条规则分别临时撤掉后对应测试失败；dry-run bundle 411 KiB、无 `eval`/`new Function`；手机端 0.2.0 构建通过 | 通过；未部署，真机推送未测 |
+| 2026-09-15 | 推送端点本地验证：`npm run check` 96 个测试通过；合并不可变、已删不复活、令牌校验、HC 批次不重排四条规则分别临时撤掉后对应测试失败；dry-run bundle 411 KiB、无 `eval`/`new Function`；手机端 0.2.0 构建通过 | 通过；部署与真机推送见下方两行 |
 | 2026-09-15 | 第二次真机推送：新增 20:42:50、20:43:44 两次经测量页的称重（两次读数完全相同），批次 published、拒绝 0；14:22、16:54 两组未产生新版本（增量只推变更时刻） | 通过 |
 | 2026-09-15 | HC 删除线上实测：用户在系统 Health Connect 删除当天全部 4 组测试称重（非真实数据）后同步，批次 published、`deletions_matched` 24、`deletions_unmatched` 0；4 组各生成 `is_deleted=1` 的新版本（有效记录 0、已删记录 6），旧版本保留。当天 09:17 由旧 FitDays 拉取的称重经用户确认为真实数据，保持不变 | 通过 |
-| — | G2 云端容量/D1 事务/云端恢复 | 未验证 |
+| 2026-09-17 | G2 云端容量/D1 事务/云端恢复 | 通过（用户确认已验证） |
