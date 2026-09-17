@@ -50,56 +50,69 @@ class CalendarDataTest {
     }
 
     @Test
-    fun `体测指标按固定顺序命名并带单位`() {
+    fun `体测指标分组命名并带单位，体重不在组里`() {
         val day = range.days.getValue(LocalDate.of(2026, 9, 14))
         val measurement = day.measurements.single()
         assertEquals(22, measurement.measuredAt!!.hour)
         assertEquals(
             listOf(
-                "体重" to "63.1 kg",
-                "体脂率" to "19 %",
-                "脂肪量" to "11.99 kg",
-                "去脂体重" to "51.11 kg",
-                "BMI" to "23.5",
+                MetricGroup(null, listOf("体脂率" to "19 %", "BMI" to "23.5")),
+                MetricGroup("脂肪", listOf("脂肪量" to "11.99 kg")),
+                MetricGroup("肌肉与骨骼", listOf("去脂体重" to "51.11 kg")),
             ),
-            metricRows(measurement.metrics),
+            metricGroups(measurement.metrics),
         )
     }
 
     @Test
-    fun `没见过的指标按原键名排在后面，不会丢`() {
-        val rows = metricRows(mapOf("weight_kg" to 63.1, "zz_new_metric" to 7.0))
-        assertEquals(listOf("体重" to "63.1 kg", "zz_new_metric" to "7"), rows)
+    fun `没见过的指标按原键名排在其他读数最后，不会丢`() {
+        val groups = metricGroups(mapOf("weight_kg" to 63.1, "zz_new_metric" to 7.0, "whr" to 0.82))
+        assertEquals(listOf(MetricGroup("其他读数", listOf("腰臀比" to "0.82", "zz_new_metric" to "7"))), groups)
+    }
+
+    @Test
+    fun `每个已知指标恰好属于一组`() {
+        val grouped = METRIC_GROUPS.flatMap { it.second }
+        assertEquals(grouped.size, grouped.toSet().size)
+        assertEquals(METRIC_LABELS.keys, grouped.toSet())
     }
 
     @Test
     fun `逐组描述合并相同负重，有氧给时长和距离`() {
         val day = range.days.getValue(LocalDate.of(2026, 9, 14))
         val entries = day.sessions[1].entries
-        assertEquals("45 kg × 12、10", describeSets(entries[0].sets))
-        assertEquals("20 分钟 · 3 km", describeSets(entries[1].sets))
+        assertEquals(listOf("45 kg × 12、10"), describeSets(entries[0].sets))
+        assertEquals(listOf("20 分钟 · 3 km"), describeSets(entries[1].sets))
 
-        // 负重变了就另起一段；缺次数的组不编造次数
+        // 负重变了就另起一行；缺次数的组不编造次数
         val mixed = listOf(
             TrainingSet(loadValue = 45.0, loadUnit = "kg", reps = 12),
             TrainingSet(loadValue = 45.0, loadUnit = "kg", reps = 12),
             TrainingSet(loadValue = 50.0, loadUnit = "kg", reps = 8),
             TrainingSet(loadValue = 50.0, loadUnit = "kg"),
         )
-        assertEquals("45 kg × 12、12；50 kg × 8；50 kg", describeSets(mixed))
+        assertEquals(listOf("45 kg × 12、12", "50 kg × 8", "50 kg"), describeSets(mixed))
+
+        // 负重组带了时长或距离时单独成行，不因合并丢字段
+        val timed = listOf(
+            TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12),
+            TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12, durationSeconds = 60),
+            TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12),
+        )
+        assertEquals(listOf("10 kg × 12", "10 kg · 12 次 · 1 分钟", "10 kg × 12"), describeSets(timed))
 
         // 只有次数（负重单位不明）时合并成一段
         val repsOnly = List(4) { TrainingSet(reps = 12) }
-        assertEquals("12、12、12、12 次", describeSets(repsOnly))
-        assertEquals("1 组", describeSets(listOf(TrainingSet())))
-        assertEquals("", describeSets(emptyList()))
+        assertEquals(listOf("12、12、12、12 次"), describeSets(repsOnly))
+        assertEquals(listOf("1 组"), describeSets(listOf(TrainingSet())))
+        assertEquals(emptyList<String>(), describeSets(emptyList()))
     }
 
     @Test
     fun `会话抬头只列填了的项`() {
         val day = range.days.getValue(LocalDate.of(2026, 9, 14))
-        assertEquals("1 小时 · 181 千卡 · RPE 7.5", sessionSummary(day.sessions[1]))
-        assertEquals("1 小时", sessionSummary(range.days.getValue(LocalDate.of(2026, 9, 16)).sessions[0]))
+        assertEquals(listOf("1 小时", "181 千卡", "RPE 7.5"), sessionSummary(day.sessions[1]))
+        assertEquals(listOf("1 小时"), sessionSummary(range.days.getValue(LocalDate.of(2026, 9, 16)).sessions[0]))
     }
 
     @Test

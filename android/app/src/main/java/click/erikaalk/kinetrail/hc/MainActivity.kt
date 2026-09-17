@@ -116,9 +116,11 @@ class MainActivity : ComponentActivity(), AppActions {
     }
 
     override fun showMonth(month: YearMonth) {
+        // 换月份时只有当月默认选中今天，别的月份先不选、等用户点；同一个月重读（重试）保留已选的日期。
+        if (month != state.month || state.selectedDate == null) {
+            state.selectedDate = LocalDate.now().takeIf { YearMonth.from(it) == month }
+        }
         state.month = month
-        // 只有当月默认选中今天；翻到别的月份先不选，等用户点。
-        state.selectedDate = LocalDate.now().takeIf { YearMonth.from(it) == month }
         loadCalendar(month)
     }
 

@@ -56,6 +56,7 @@ private fun Root(state: AppState, actions: AppActions) {
     val topLevel = state.screen.tab == state.screen
 
     var headerHeight by remember(topInset) { mutableStateOf(topInset + KtHeader.minHeight) }
+    var tabBarHeight by remember { mutableStateOf(KtTabBar.minHeight) }
     // 大标题的上下边在布局阶段写入、顶栏在绘制阶段读取，滚动不触发重组（沿用 Android 基础参考的收起口径）。
     val titleTopPx = remember { mutableFloatStateOf(Float.MAX_VALUE) }
     val titleBottomPx = remember { mutableFloatStateOf(Float.MAX_VALUE) }
@@ -78,7 +79,7 @@ private fun Root(state: AppState, actions: AppActions) {
 
     val insets = PageInsets(
         top = headerHeight,
-        bottom = navInset + KtTabBar.contentInset,
+        bottom = navInset + KtTabBar.contentInset(tabBarHeight),
         onTitleBounds = remember {
             { top: Float, bottom: Float ->
                 titleTopPx.floatValue = top
@@ -125,7 +126,8 @@ private fun Root(state: AppState, actions: AppActions) {
             backdrop = backdrop,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = navInset + KtTabBar.bottomGap),
+                .padding(bottom = navInset + KtTabBar.bottomGap)
+                .onSizeChanged { tabBarHeight = with(density) { it.height.toDp() } },
         )
     }
 }

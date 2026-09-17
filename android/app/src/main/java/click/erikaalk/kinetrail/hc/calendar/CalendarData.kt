@@ -138,6 +138,10 @@ fun num(value: Double): String {
 /** 日期格下面的小字：热量取整，不显示小数。 */
 fun kcalLabel(value: Double): String = "${Math.round(value)}"
 
+/** 只有负重和次数的一组才和相邻同负重的组合并；带时长或距离的组单独成行，字段不丢。 */
+private fun TrainingSet.loadAndRepsOnly() =
+    loadValue != null && reps != null && durationSeconds == null && distanceValue == null
+
 private fun loadText(set: TrainingSet): String? =
     set.loadValue?.let { "${num(it)} ${set.loadUnit ?: "kg"}" }
 
@@ -149,20 +153,20 @@ private fun durationText(seconds: Int): String {
 }
 
 /**
- * 一个动作的逐组描述。
+ * 一个动作的逐组描述，一段一行。
  * 负重相同的连续组合并成「45 kg × 12、12、10」；有氧组给时长和距离；缺的值不补。
  */
-fun describeSets(sets: List<TrainingSet>): String {
+fun describeSets(sets: List<TrainingSet>): List<String> {
     val parts = mutableListOf<String>()
     var i = 0
     while (i < sets.size) {
         val set = sets[i]
         val load = loadText(set)
         val reps = set.reps
-        if (load != null && reps != null) {
+        if (load != null && reps != null && set.loadAndRepsOnly()) {
             val group = mutableListOf(reps)
             var j = i + 1
-            while (j < sets.size && loadText(sets[j]) == load && sets[j].reps != null) {
+            while (j < sets.size && sets[j].loadAndRepsOnly() && loadText(sets[j]) == load) {
                 group.add(sets[j].reps!!)
                 j++
             }
@@ -194,46 +198,58 @@ fun describeSets(sets: List<TrainingSet>): String {
         parts.add(if (pieces.isEmpty()) "1 组" else pieces.joinToString(" · "))
         i++
     }
-    return parts.joinToString("；")
+    return parts
 }
 
-/** 会话抬头那一行：时长、消耗、RPE、场馆，缺的不占位。 */
-fun sessionSummary(session: TrainingSession): String = listOfNotNull(
+/** 会话抬头下面那一排：时长、消耗、RPE，缺的不占位。场馆单独一行，不在这里。 */
+fun sessionSummary(session: TrainingSession): List<String> = listOfNotNull(
     session.durationSeconds?.let { durationText(it) },
     session.caloriesKcal?.let { "${kcalLabel(it)} 千卡" },
     session.overallRpe?.let { "RPE ${num(it)}" },
-    session.facility,
-).joinToString(" · ")
+)
 
-/** 体测指标的显示顺序、中文名和单位。服务端以后多给的指标按原键名排在后面，不会丢。 */
-private val METRIC_LABELS = listOf(
-    "weight_kg" to ("体重" to "kg"),
+/** 体测指标的中文名和单位。体重不在这里：卡片上单独用大字显示。 */
+internal val METRIC_LABELS = mapOf(
     "body_fat_pct" to ("体脂率" to "%"),
+    "bmi" to ("BMI" to ""),
     "fat_mass_kg" to ("脂肪量" to "kg"),
+    "subcutaneous_fat_pct" to ("皮下脂肪率" to "%"),
+    "visceral_fat_index" to ("内脏脂肪等级" to ""),
     "fat_free_mass_kg" to ("去脂体重" to "kg"),
     "muscle_pct" to ("肌肉率" to "%"),
     "skeletal_muscle_pct" to ("骨骼肌率" to "%"),
-    "protein_pct" to ("蛋白质率" to "%"),
-    "body_water_pct" to ("水分率" to "%"),
     "bone_mass_kg" to ("骨量" to "kg"),
-    "subcutaneous_fat_pct" to ("皮下脂肪率" to "%"),
-    "visceral_fat_index" to ("内脏脂肪等级" to ""),
-    "bmi" to ("BMI" to ""),
-    "bmr_kcal" to ("基础代谢" to "千卡"),
     "smi" to ("SMI" to "kg/m²"),
+    "body_water_pct" to ("水分率" to "%"),
+    "protein_pct" to ("蛋白质率" to "%"),
+    "bmr_kcal" to ("基础代谢" to "千卡"),
     "whr" to ("腰臀比" to ""),
     "body_age" to ("身体年龄" to "岁"),
     "heart_rate_bpm" to ("心率" to "bpm"),
     "height_cm" to ("身高" to "cm"),
 )
 
-fun metricRows(metrics: Map<String, Double>): List<Pair<String, String>> {
-    val known = METRIC_LABELS.mapNotNull { (key, label) ->
-        val value = metrics[key] ?: return@mapNotNull null
-        val (name, unit) = label
-        name to if (unit.isEmpty()) num(value) else "${num(value)} $unit"
-    }
-    val extra = metrics.keys.filterNot { key -> METRIC_LABELS.any { it.first == key } }.sorted()
-        .map { it to num(metrics.getValue(it)) }
-    return known + extra
+/** 一组体测指标。[title] 为 null 的是卡片上默认露出的那组，其余点「展开指标」才显示。 */
+data class MetricGroup(val title: String?, val rows: List<Pair<String, String>>)
+
+/** 分组与组内顺序。[METRIC_LABELS] 的每个键恰好出现在一组里，单测钉住。 */
+internal val METRIC_GROUPS = listOf(
+    null to listOf("body_fat_pct", "bmi"),
+    "脂肪" to listOf("fat_mass_kg", "subcutaneous_fat_pct", "visceral_fat_index"),
+    "肌肉与骨骼" to listOf("fat_free_mass_kg", "muscle_pct", "skeletal_muscle_pct", "bone_mass_kg", "smi"),
+    "水分与蛋白质" to listOf("body_water_pct", "protein_pct"),
+    "其他读数" to listOf("bmr_kcal", "whr", "body_age", "heart_rate_bpm", "height_cm"),
+)
+
+/** 按组列出体重以外的指标，空组不出现。服务端以后多给的指标按原键名排在「其他读数」最后，不会丢。 */
+fun metricGroups(metrics: Map<String, Double>): List<MetricGroup> {
+    val extra = metrics.keys.filterNot { it == "weight_kg" || it in METRIC_LABELS }.sorted()
+    return METRIC_GROUPS.map { (title, keys) ->
+        val rows = keys.mapNotNull { key ->
+            val value = metrics[key] ?: return@mapNotNull null
+            val (name, unit) = METRIC_LABELS.getValue(key)
+            name to if (unit.isEmpty()) num(value) else "${num(value)} $unit"
+        }
+        MetricGroup(title, if (title == "其他读数") rows + extra.map { it to num(metrics.getValue(it)) } else rows)
+    }.filter { it.rows.isNotEmpty() }
 }
