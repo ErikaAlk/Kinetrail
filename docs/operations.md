@@ -237,9 +237,9 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 
 手机上的“训练日历”从 `GET /app/calendar` 读数据，鉴权用的是第 9 节那个推送令牌，不需要额外配置。规则见 DATA_CONTRACT 第 9 节。
 
-- 日期下的小字是当天各训练会话 `calories_kcal` 之和。这个值由模型在 `finalize_workout_session` 时写入（用户把手表截图给模型，模型填 `calories_kcal`），手表数据不经过 Health Connect；没填就没有小字。
+- 点开日期后标题下的「已记录消耗 N 千卡」是当天各训练会话 `calories_kcal` 之和。这个值由模型在 `finalize_workout_session` 时写入（用户把手表截图给模型，模型填 `calories_kcal`），手表数据不经过 Health Connect；没填时写「消耗未记录」。
 - 上线顺序：先 `npx wrangler d1 migrations apply kinetrail --remote`（`0002_session_calories.sql` 加 `workout_sessions.calories_kcal`），再 `npx wrangler deploy`，最后装 0.4.0 的 APK。旧 Worker 会让日历页报 404，旧 APK 不受新字段影响。
-- 令牌泄漏的处置不变，但影响范围更大了：这个令牌现在既能写 HC 体重，也能读出全部体测与训练事实。按第 6 节轮换后，手机上要重新保存令牌。
+- 令牌泄漏的处置不变，但影响范围更大了：这个令牌现在既能写 HC 体重，也能读出全部体测与训练事实。按第 6 节轮换后，手机上要重新保存令牌。手机还会把看过的月份原样存在 App 的缓存目录里，丢手机时这部分只靠手机锁屏和应用沙箱保护，卸载 App 或清除数据即删除。
 - 排查：Observability 里筛 `event:"calendar"`，只有 `status`、`count`、`duration_ms`、错误码，不记日期、数值和令牌。
 
 ## 验证记录

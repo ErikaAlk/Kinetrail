@@ -89,6 +89,7 @@ import java.time.format.DateTimeFormatter
  * 这一行没有标记也照样占位，同一周的数字才对得齐。当天热量（手表记录、随训练写入服务端）在详情标题下面。
  *
  * 数据全部来自服务端 `/app/calendar`，与 Health Connect 无关，也不会触发同步。
+ * 取回的每个月在本机留一份，刷新期间照常显示那一份（见 MainActivity.loadCalendar）。
  */
 @Composable
 fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
@@ -116,14 +117,22 @@ fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
                 color = colors.text.primary,
                 modifier = Modifier.weight(1f),
             )
+            // 读取中转圈占刷新按钮的位置，同一块 48dp，两个翻月箭头不跟着动
             if (state.calendarLoading) {
-                CircularProgressIndicator(
-                    Modifier
-                        .padding(end = KtSpacing.Gap.inline)
-                        .size(20.dp)
-                        .semantics { contentDescription = "读取中" },
-                    color = colors.accent.text,
-                    strokeWidth = 2.dp,
+                Box(Modifier.size(KtIconButton.size), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(
+                        Modifier
+                            .size(20.dp)
+                            .semantics { contentDescription = "读取中" },
+                        color = colors.accent.text,
+                        strokeWidth = 2.dp,
+                    )
+                }
+            } else {
+                KtIconButton(
+                    icon = R.drawable.ic_rotate_cw,
+                    contentDescription = "刷新",
+                    onClick = { actions.showMonth(state.month) },
                 )
             }
             KtIconButton(
@@ -158,7 +167,7 @@ fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
         MonthGrid(state, actions, today)
         Legend()
 
-        if (state.calendarTruncated) {
+        if (loaded && state.calendarTruncated) {
             InlineBanner(
                 "这个月的记录超出一次能取回的上限，下面只是其中一部分。",
                 tone = BannerTone.Warning,
@@ -168,7 +177,8 @@ fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
         val error = state.calendarError
         if (error != null) {
             InlineBanner(
-                error,
+                // 本机有这个月的数据时页面照常显示，得说清楚那是旧的
+                if (loaded) "$error。下面是上次取回的记录。" else error,
                 tone = BannerTone.Error,
                 modifier = Modifier.padding(horizontal = KtSpacing.Padding.pageX).padding(top = KtSpacing.Gap.group),
             )
@@ -230,11 +240,12 @@ private fun MonthGrid(state: AppState, actions: AppActions, today: LocalDate) {
 }
 
 /**
- * 月历标记的边长：默认 16dp，跟着系统字号放大，2 倍字号到 18dp 为止。
- * 它是日期数字旁边的辅助图形，重量不能超过数字，所以不跟着字号无限长。
+ * 月历标记的边长：默认 14dp，跟着系统字号放大，2 倍字号到 16dp 为止。
+ * 它是日期数字旁边的辅助图形，重量不能超过数字，所以不跟着字号无限长；
+ * 16dp 时 360dp 宽的手机上一格宽约 46dp、高 69dp，整张月历瘦长，收到 14dp 并压掉间距后一行约 53dp。
  */
 @Composable
-private fun markSize(): Dp = (16f + 2f * (LocalDensity.current.fontScale - 1f).coerceIn(0f, 1f)).dp
+private fun markSize(): Dp = (14f + 2f * (LocalDensity.current.fontScale - 1f).coerceIn(0f, 1f)).dp
 
 /**
  * 训练是活动波形，称重是体重秤：同一家族的线条图标，靠轮廓区分，不靠颜色；
@@ -292,7 +303,7 @@ private fun DayCell(
                 this.selected = selected
             }
             .defaultMinSize(minHeight = 48.dp)
-            .padding(vertical = KtSpacing.space2),
+            .padding(vertical = KtSpacing.space1),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
@@ -323,8 +334,8 @@ private fun DayCell(
         val markColor = if (selected) colors.accent.onAccent else colors.text.secondary
         Row(
             Modifier
-                .padding(top = KtSpacing.Gap.related)
-                .height(size + KtSpacing.space1),
+                .padding(top = 2.dp)
+                .height(size),
             horizontalArrangement = Arrangement.spacedBy(KtSpacing.Gap.related, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
