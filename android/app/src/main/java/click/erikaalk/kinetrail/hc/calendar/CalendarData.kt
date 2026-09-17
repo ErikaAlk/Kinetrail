@@ -160,11 +160,15 @@ fun sessionStats(session: TrainingSession): List<SessionStat> = listOfNotNull(
     session.overallRpe?.let { SessionStat("RPE", listOf(Reading(num(it), ""))) },
 )
 
+/** 表格里的一行：相邻的 [count] 组每一格都一样。某组没填的格是 null。 */
+data class SetRow(val count: Int, val cells: List<String?>)
+
 /**
- * 一个动作的逐组表格，一组一行。[columns] 只放这个动作里至少有一组填了的字段，顺序固定为负重、次数、时长、距离；
- * [rows] 里某组没填的格是 null。单位照服务端给的写（写入时数值和单位必须成对），不补默认单位。
+ * 一个动作的逐组表格。[columns] 只放这个动作里至少有一组填了的字段，顺序固定为负重、次数、时长、距离；
+ * 相邻几组负重、次数、时长、距离全一样时合成一行记组数，中间隔了别的组不合并，先后顺序不乱。
+ * 单位照服务端给的写（写入时数值和单位必须成对），不补默认单位。
  */
-data class SetTable(val columns: List<String>, val rows: List<List<String?>>)
+data class SetTable(val columns: List<String>, val rows: List<SetRow>)
 
 private fun withUnit(value: String, unit: String?) = if (unit == null) value else "$value $unit"
 
@@ -177,7 +181,13 @@ private val SET_FIELDS = listOf<Pair<String, (TrainingSet) -> String?>>(
 
 fun setTable(sets: List<TrainingSet>): SetTable {
     val fields = SET_FIELDS.filter { (_, cell) -> sets.any { cell(it) != null } }
-    return SetTable(fields.map { it.first }, sets.map { set -> fields.map { (_, cell) -> cell(set) } })
+    val rows = mutableListOf<SetRow>()
+    for (set in sets) {
+        val cells = fields.map { (_, cell) -> cell(set) }
+        val last = rows.lastOrNull()
+        if (last?.cells == cells) rows[rows.lastIndex] = last.copy(count = last.count + 1) else rows.add(SetRow(1, cells))
+    }
+    return SetTable(fields.map { it.first }, rows)
 }
 
 /** 体测指标的中文名和单位。体重不在这里：卡片上单独用大字显示。 */

@@ -393,7 +393,10 @@ private fun DayDetail(date: LocalDate, day: CalendarDay?, loaded: Boolean, trunc
     }
 
     day.sessions.forEachIndexed { index, session ->
-        KtCard(Modifier.padding(top = if (index == 0) 0.dp else KtSpacing.Gap.group)) { SessionBody(session) }
+        // 和称重一样，展开状态跟着这一天的这一次训练走
+        key(date, index) {
+            KtCard(Modifier.padding(top = if (index == 0) 0.dp else KtSpacing.Gap.group)) { SessionBody(session) }
+        }
     }
 
     day.measurements.forEachIndexed { index, measurement ->
@@ -447,12 +450,14 @@ private fun LabeledReading(label: String, readings: List<Reading>, valueStyle: T
 }
 
 /**
- * 一次训练。会话和动作的备注不显示：那是写给模型看的上下文（单位说明、手表原话之类），
+ * 一次训练。默认收起：抬头、统计和动作名单常驻，逐组表格点「展开动作」才出来。
+ * 会话和动作的备注不显示：那是写给模型看的上下文（单位说明、手表原话之类），
  * 服务端照样保存，模型读历史时用得上；手机上只看结构化的数。
  */
 @Composable
 private fun SessionBody(session: TrainingSession) {
     val colors = ktColors
+    var expanded by remember { mutableStateOf(false) }
     // 补记的训练开始和结束是同一时刻，那样显示成「16:56–16:56」像坏了，只给一个时间。
     val span = listOfNotNull(session.startedAt?.format(TIME), session.endedAt?.format(TIME))
         .distinct()
@@ -490,11 +495,23 @@ private fun SessionBody(session: TrainingSession) {
     if (session.entries.isEmpty()) {
         CardDivider()
         Text("还没有记录动作。", style = KtType.secondary, color = colors.text.secondary)
+        return
     }
-    for (entry in session.entries) {
+    if (expanded) {
+        for (entry in session.entries) {
+            CardDivider()
+            EntryBlock(entry)
+        }
+    } else {
         CardDivider()
-        EntryBlock(entry)
+        Text(session.entries.joinToString("、") { it.name }, style = KtType.body, color = colors.text.secondary)
     }
+    DisclosureRow(
+        noun = "动作",
+        expanded = expanded,
+        onToggle = { expanded = !expanded },
+        modifier = Modifier.padding(top = KtSpacing.Gap.control),
+    )
 }
 
 /** 一个动作：名字、器械、逐组表格。 */
@@ -514,7 +531,7 @@ private fun EntryBlock(entry: TrainingEntry) {
     }
 }
 
-/** 列宽权重：组号窄，数据列等宽。同一个动作的每一行用同一套权重，上下才对得齐。 */
+/** 列宽权重：组数窄，数据列等宽。同一个动作的每一行用同一套权重，上下才对得齐。 */
 private const val INDEX_COLUMN_WEIGHT = 0.5f
 
 /** 表格里的一格：右对齐；没填写「—」，读屏读「未记录」。 */
@@ -531,18 +548,18 @@ private fun SetCell(text: String?, modifier: Modifier = Modifier) {
 }
 
 /**
- * 逐组表格：组号靠左，表头和数据右对齐，不画外框、竖线和逐行横线。
- * 系统字号放大后改成逐组竖排，不缩字、不横向滚动。
+ * 逐组表格：组数靠左，表头和数据右对齐，不画外框、竖线和逐行横线。相邻的相同组已合成一行，第一列是这一行代表几组。
+ * 系统字号放大后改成逐行竖排，不缩字、不横向滚动。
  */
 @Composable
 private fun SetTableView(table: SetTable, modifier: Modifier = Modifier) {
     val colors = ktColors
     if (LocalDensity.current.fontScale > LARGE_FONT_SCALE) {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.control)) {
-            table.rows.forEachIndexed { index, row ->
+            table.rows.forEach { row ->
                 Column(Modifier.semantics(mergeDescendants = true) {}) {
-                    Text("第 ${index + 1} 组", style = KtType.secondary, color = colors.text.secondary)
-                    table.columns.zip(row).forEach { (label, cell) ->
+                    Text("${row.count} 组", style = KtType.secondary, color = colors.text.secondary)
+                    table.columns.zip(row.cells).forEach { (label, cell) ->
                         Row(Modifier.padding(top = KtSpacing.Gap.related)) {
                             Text(label, style = KtType.body, color = colors.text.secondary, modifier = Modifier.weight(1f))
                             SetCell(cell)
@@ -556,20 +573,22 @@ private fun SetTableView(table: SetTable, modifier: Modifier = Modifier) {
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.control)) {
         Row {
-            Text("组", style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.weight(INDEX_COLUMN_WEIGHT))
+            Text("组数", style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.weight(INDEX_COLUMN_WEIGHT))
             table.columns.forEach {
                 Text(it, style = KtType.secondary, color = colors.text.secondary, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
             }
         }
-        table.rows.forEachIndexed { index, row ->
+        table.rows.forEach { row ->
             Row(Modifier.semantics(mergeDescendants = true) {}) {
                 Text(
-                    "${index + 1}",
+                    "${row.count}",
                     style = KtType.body.tabular(),
                     color = colors.text.secondary,
-                    modifier = Modifier.weight(INDEX_COLUMN_WEIGHT),
+                    modifier = Modifier
+                        .weight(INDEX_COLUMN_WEIGHT)
+                        .semantics { contentDescription = "${row.count} 组" },
                 )
-                row.forEach { SetCell(it, Modifier.weight(1f)) }
+                row.cells.forEach { SetCell(it, Modifier.weight(1f)) }
             }
         }
     }
@@ -642,7 +661,12 @@ private fun MeasurementCard(measurement: BodyMeasurement, modifier: Modifier = M
             )
         }
         if (more.isNotEmpty()) {
-            DisclosureRow(expanded = expanded, onToggle = { expanded = !expanded }, modifier = Modifier.padding(top = KtSpacing.Gap.control))
+            DisclosureRow(
+                noun = "指标",
+                expanded = expanded,
+                onToggle = { expanded = !expanded },
+                modifier = Modifier.padding(top = KtSpacing.Gap.control),
+            )
         }
     }
 }
@@ -671,9 +695,9 @@ private fun MetricLine(row: MetricRow) {
     }
 }
 
-/** 卡底居中的「展开指标 ⌄」。原地展开，不是去另一页，所以不用 ›。 */
+/** 卡底居中的「展开指标 ⌄」「展开动作 ⌄」。原地展开，不是去另一页，所以不用 ›。 */
 @Composable
-private fun DisclosureRow(expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+private fun DisclosureRow(noun: String, expanded: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
     val colors = ktColors
     val interaction = remember { MutableInteractionSource() }
     Row(
@@ -692,7 +716,7 @@ private fun DisclosureRow(expanded: Boolean, onToggle: () -> Unit, modifier: Mod
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(if (expanded) "收起指标" else "展开指标", style = KtType.body, color = colors.accent.text)
+        Text(if (expanded) "收起$noun" else "展开$noun", style = KtType.body, color = colors.accent.text)
         Icon(
             painter = painterResource(R.drawable.ic_chevron_right),
             contentDescription = null,

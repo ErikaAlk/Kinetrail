@@ -88,26 +88,45 @@ class CalendarDataTest {
     }
 
     @Test
-    fun `逐组表格一组一行，只列填过的字段`() {
+    fun `逐组表格只列填过的字段，相邻的相同组合成一行`() {
         val day = range.days.getValue(LocalDate.of(2026, 9, 14))
         val entries = day.sessions[1].entries
-        assertEquals(SetTable(listOf("负重", "次数"), listOf(listOf("45 kg", "12"), listOf("45 kg", "10"))), setTable(entries[0].sets))
-        assertEquals(SetTable(listOf("时长", "距离"), listOf(listOf("20 分钟", "3 km"))), setTable(entries[1].sets))
+        assertEquals(
+            SetTable(listOf("负重", "次数"), listOf(SetRow(1, listOf("45 kg", "12")), SetRow(1, listOf("45 kg", "10")))),
+            setTable(entries[0].sets),
+        )
+        assertEquals(SetTable(listOf("时长", "距离"), listOf(SetRow(1, listOf("20 分钟", "3 km")))), setTable(entries[1].sets))
 
-        // 同负重不再合并；带时长的那组多一列，别的组那格留空，字段不丢
+        // 负重和次数都一样的相邻组合并；隔了别的组的不合并，顺序不乱
+        val leg = TrainingSet(loadValue = 50.0, loadUnit = "kg", reps = 12)
+        val dip = TrainingSet(loadValue = 25.0, loadUnit = "kg", reps = 12)
+        assertEquals(
+            listOf(SetRow(3, listOf("50 kg", "12")), SetRow(1, listOf("25 kg", "12")), SetRow(1, listOf("50 kg", "12"))),
+            setTable(listOf(leg, leg, leg, dip, leg)).rows,
+        )
+        // 同一负重同一次数、但单位不同不算一样
+        assertEquals(2, setTable(listOf(leg, leg.copy(loadUnit = "lb"))).rows.size)
+
+        // 带时长的那组多一列，和不带时长的组不合并，字段不丢
         val timed = listOf(
             TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12),
             TrainingSet(loadValue = 10.0, loadUnit = "kg", reps = 12, durationSeconds = 90),
         )
         assertEquals(
-            SetTable(listOf("负重", "次数", "时长"), listOf(listOf("10 kg", "12", null), listOf("10 kg", "12", "1 分 30 秒"))),
+            SetTable(
+                listOf("负重", "次数", "时长"),
+                listOf(SetRow(1, listOf("10 kg", "12", null)), SetRow(1, listOf("10 kg", "12", "1 分 30 秒"))),
+            ),
             setTable(timed),
         )
 
         // 只有次数时没有负重列；0 kg 照实写；没给单位不补 kg
-        assertEquals(SetTable(listOf("次数"), listOf(listOf("12"), listOf("10"))), setTable(listOf(TrainingSet(reps = 12), TrainingSet(reps = 10))))
-        assertEquals(listOf(listOf("0 kg", "15")), setTable(listOf(TrainingSet(loadValue = 0.0, loadUnit = "kg", reps = 15))).rows)
-        assertEquals(listOf(listOf("20")), setTable(listOf(TrainingSet(loadValue = 20.0))).rows)
+        assertEquals(
+            SetTable(listOf("次数"), listOf(SetRow(1, listOf("12")), SetRow(1, listOf("10")))),
+            setTable(listOf(TrainingSet(reps = 12), TrainingSet(reps = 10))),
+        )
+        assertEquals(listOf(SetRow(1, listOf("0 kg", "15"))), setTable(listOf(TrainingSet(loadValue = 0.0, loadUnit = "kg", reps = 15))).rows)
+        assertEquals(listOf(SetRow(1, listOf("20"))), setTable(listOf(TrainingSet(loadValue = 20.0))).rows)
         assertEquals(SetTable(emptyList(), emptyList()), setTable(emptyList()))
     }
 
