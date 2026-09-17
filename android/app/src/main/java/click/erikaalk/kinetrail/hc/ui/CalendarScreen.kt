@@ -1,8 +1,8 @@
 package click.erikaalk.kinetrail.hc.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,7 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -50,6 +48,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import click.erikaalk.kinetrail.hc.R
@@ -86,8 +85,8 @@ import java.time.format.DateTimeFormatter
 /**
  * 训练日历：上半是月历，下半是选中那天的训练和称重。
  *
- * 日期格里数字下面的一格是标记：有热量写热量（手表记录、随训练写入服务端），没热量但有训练给实心点，
- * 称过体重再加一个空心方块。这一格没有标记也照样占位，同一周的数字才对得齐。
+ * 日期格里数字下面一行是标记：训练是活动波形图标，称重是体重秤图标，同一家族的线条图标靠轮廓区分。
+ * 这一行没有标记也照样占位，同一周的数字才对得齐。当天热量（手表记录、随训练写入服务端）在详情标题下面。
  *
  * 数据全部来自服务端 `/app/calendar`，与 Health Connect 无关，也不会触发同步。
  */
@@ -157,7 +156,7 @@ fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
         }
 
         MonthGrid(state, actions, today)
-        Legend(showKcal = state.calendarDays.values.any { it.caloriesKcal != null })
+        Legend()
 
         if (state.calendarTruncated) {
             InlineBanner(
@@ -230,21 +229,26 @@ private fun MonthGrid(state: AppState, actions: AppActions, today: LocalDate) {
     }
 }
 
-/** 训练标记：实心圆点。 */
+/**
+ * 月历标记的边长：默认 16dp，跟着系统字号放大，2 倍字号到 18dp 为止。
+ * 它是日期数字旁边的辅助图形，重量不能超过数字，所以不跟着字号无限长。
+ */
 @Composable
-private fun TrainingMark(color: Color) {
-    Box(Modifier.size(5.dp).clip(CircleShape).background(color))
-}
+private fun markSize(): Dp = (16f + 2f * (LocalDensity.current.fontScale - 1f).coerceIn(0f, 1f)).dp
 
-/** 称重标记：空心方块，和训练点靠形状区分，不只靠颜色。 */
+/**
+ * 训练是活动波形，称重是体重秤：同一家族的线条图标，靠轮廓区分，不靠颜色；
+ * 选中后两枚同色也分得开。不带底块，不套框。
+ */
 @Composable
-private fun WeighMark(color: Color) {
-    Box(Modifier.size(6.dp).border(1.5.dp, color, RectangleShape))
+private fun CalendarMark(@DrawableRes icon: Int, color: Color, size: Dp) {
+    Icon(painterResource(icon), contentDescription = null, tint = color, modifier = Modifier.size(size))
 }
 
 /**
  * 一个日期格。选中是实色底块；今天是数字下面一道短线，选中时也在，今天和选中同时成立也分得开。
- * 读屏把整格读成一句（日期、今天、训练、热量、称重），不逐个读数字和标记。
+ * 数字下面一行放训练、称重两枚图标，空着也占位，同一周的数字才对得齐。热量不在格子里，点开日期在详情标题下看。
+ * 读屏把整格读成一句（日期、今天、训练、未结束、热量、称重），不逐个读数字和图标。
  */
 @Composable
 private fun DayCell(
@@ -259,15 +263,13 @@ private fun DayCell(
     val kcal = day?.caloriesKcal
     val trained = day?.sessions?.isNotEmpty() == true
     val weighed = day?.measurements?.isNotEmpty() == true
-    val markColor = if (selected) colors.accent.onAccent else colors.accent.text
+    val open = day?.sessions?.any { it.status == "open" } == true
     val description = listOfNotNull(
         "${date.monthValue} 月 ${date.dayOfMonth} 日",
         "今天".takeIf { today },
-        when {
-            kcal != null -> "训练，消耗 ${kcalLabel(kcal)} 千卡"
-            trained -> "训练"
-            else -> null
-        },
+        "训练".takeIf { trained },
+        "有未结束训练".takeIf { open },
+        kcal?.let { "已记录消耗 ${kcalLabel(it)} 千卡" },
         "称重".takeIf { weighed },
     ).joinToString("，")
 
@@ -308,42 +310,35 @@ private fun DayCell(
                 .padding(top = 2.dp)
                 .size(width = 12.dp, height = 2.dp)
                 .clip(CircleShape)
-                .background(if (today) markColor else Color.Transparent),
+                .background(
+                    when {
+                        !today -> Color.Transparent
+                        selected -> colors.accent.onAccent
+                        else -> colors.accent.text
+                    },
+                ),
         )
-        // 标记这一格固定占一行字高，空着也占
-        val density = LocalDensity.current
-        val slot = with(density) { KtType.caption.lineHeight.toDp() }
-        // 系统字号很大时四位数热量塞不进格子：不折行也不截断，退回训练点，读屏和当天详情里仍有热量
-        var kcalFits by remember(kcal, density.fontScale) { mutableStateOf(true) }
-        FlowRow(
-            Modifier.heightIn(min = slot),
-            horizontalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterHorizontally),
-            itemVerticalAlignment = Alignment.CenterVertically,
+        // 标记行固定高度，空着也占；两枚图标整体居中，顺序固定训练在前
+        val size = markSize()
+        val markColor = if (selected) colors.accent.onAccent else colors.text.secondary
+        Row(
+            Modifier
+                .padding(top = KtSpacing.Gap.related)
+                .height(size + KtSpacing.space1),
+            horizontalArrangement = Arrangement.spacedBy(KtSpacing.Gap.related, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            when {
-                kcal != null && kcalFits -> Text(
-                    kcalLabel(kcal),
-                    style = KtType.caption,
-                    color = markColor,
-                    maxLines = 1,
-                    softWrap = false,
-                    onTextLayout = { if (it.didOverflowWidth) kcalFits = false },
-                )
-                trained || kcal != null -> Box(Modifier.heightIn(min = slot), contentAlignment = Alignment.Center) { TrainingMark(markColor) }
-            }
-            if (weighed) {
-                Box(Modifier.heightIn(min = slot), contentAlignment = Alignment.Center) {
-                    WeighMark(if (selected) colors.accent.onAccent else colors.text.secondary)
-                }
-            }
+            if (trained) CalendarMark(R.drawable.ic_activity, markColor, size)
+            if (weighed) CalendarMark(R.drawable.ic_weight, markColor, size)
         }
     }
 }
 
-/** 月历下的图例。热量那一项只在这个月真的有热量时出现。 */
+/** 月历下的图例，用的就是格子里那两枚图标。大字号下两项可以整体换行，图标和标签不拆开。 */
 @Composable
-private fun Legend(showKcal: Boolean) {
+private fun Legend() {
     val colors = ktColors
+    val size = markSize()
     FlowRow(
         Modifier
             .fillMaxWidth()
@@ -353,14 +348,13 @@ private fun Legend(showKcal: Boolean) {
         itemVerticalAlignment = Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KtSpacing.Gap.inline)) {
-            TrainingMark(colors.accent.text)
+            CalendarMark(R.drawable.ic_activity, colors.text.secondary, size)
             Text("训练", style = KtType.caption, color = colors.text.secondary)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(KtSpacing.Gap.inline)) {
-            WeighMark(colors.text.secondary)
+            CalendarMark(R.drawable.ic_weight, colors.text.secondary, size)
             Text("称重", style = KtType.caption, color = colors.text.secondary)
         }
-        if (showKcal) Text("数字：消耗千卡", style = KtType.caption, color = colors.text.secondary)
     }
 }
 
@@ -390,6 +384,18 @@ private fun DayDetail(date: LocalDate, day: CalendarDay?, loaded: Boolean, trunc
             modifier = Modifier.padding(horizontal = KtSpacing.Padding.pageX + KtSpacing.cardPaddingX),
         )
         return
+    }
+
+    // 月历格子里不再写热量，挪到这里。用服务端给的当天合计，不在手机上重新加；没写进来就明说，和 0 千卡分开
+    if (day.sessions.isNotEmpty()) {
+        Text(
+            day.caloriesKcal?.let { "已记录消耗 ${kcalLabel(it)} 千卡" } ?: "消耗未记录",
+            style = KtType.secondary,
+            color = colors.text.secondary,
+            modifier = Modifier
+                .padding(horizontal = KtSpacing.Padding.pageX + KtSpacing.cardPaddingX)
+                .padding(bottom = KtSpacing.sectionTitleToCard),
+        )
     }
 
     day.sessions.forEachIndexed { index, session ->
