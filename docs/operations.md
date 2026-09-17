@@ -109,7 +109,7 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT dataset, path, valu
 
 1. 本地：`npm ci` → 修改 → `npm run check`（lint、typecheck、测试、秘密扫描）→ 需要时 `node scripts/licenses.mjs` 更新 THIRD_PARTY_NOTICES。
 2. 新增迁移放在 `migrations/000N_*.sql`，只做加法（新表、新列、新索引）。不得在迁移里删除或改写事实表数据；需要重建投影时新建表、校验后切换。
-3. 发布：先 `npx wrangler d1 migrations apply kinetrail --remote`，再 `npx wrangler deploy`。
+3. 发布：先 `npx wrangler d1 migrations apply kinetrail --remote`，再 `npx wrangler deploy`。改了 MCP 工具的参数或说明时，部署后到 ChatGPT 的插件设置里对 Kinetrail 点 Refresh，再开新对话；不刷新 ChatGPT 会一直用连接时拉到的旧工具列表（2026-09-16 部署了 `calories_kcal` 却没刷新，模型把手表消耗写进了备注）。
 4. 回滚代码：`npx wrangler versions list` → `npx wrangler rollback <version-id>`。迁移不可自动回滚，所以新代码必须兼容旧 schema，旧代码必须能忽略新增列。
 5. 依赖版本全部固定（`.npmrc save-exact`），升级后必须重跑 `npm audit` 与全部测试；OAuth Provider 升级前核对 `unwrapToken` 语义与发现文档。
 

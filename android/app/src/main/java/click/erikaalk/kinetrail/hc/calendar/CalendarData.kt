@@ -24,7 +24,6 @@ data class TrainingEntry(
     val category: String,
     val equipment: String?,
     val sets: List<TrainingSet>,
-    val notes: String?,
 )
 
 data class TrainingSession(
@@ -35,7 +34,6 @@ data class TrainingSession(
     val caloriesKcal: Double?,
     val overallRpe: Double?,
     val facility: String?,
-    val notes: String?,
     val entries: List<TrainingEntry>,
 )
 
@@ -82,13 +80,11 @@ fun parseCalendar(body: String): CalendarRange {
                     caloriesKcal = s.doubleOrNull("calories_kcal"),
                     overallRpe = s.doubleOrNull("overall_rpe"),
                     facility = s.stringOrNull("facility"),
-                    notes = s.stringOrNull("notes"),
                     entries = s.optJSONArray("entries").map { e ->
                         TrainingEntry(
                             name = e.optString("exercise_name_raw"),
                             category = e.optString("category"),
                             equipment = e.stringOrNull("equipment_label"),
-                            notes = e.stringOrNull("notes"),
                             sets = e.optJSONArray("sets").map { set ->
                                 TrainingSet(
                                     loadValue = set.doubleOrNull("load_value"),

@@ -446,6 +446,10 @@ private fun LabeledReading(label: String, readings: List<Reading>, valueStyle: T
     }
 }
 
+/**
+ * 一次训练。会话和动作的备注不显示：那是写给模型看的上下文（单位说明、手表原话之类），
+ * 服务端照样保存，模型读历史时用得上；手机上只看结构化的数。
+ */
 @Composable
 private fun SessionBody(session: TrainingSession) {
     val colors = ktColors
@@ -491,15 +495,9 @@ private fun SessionBody(session: TrainingSession) {
         CardDivider()
         EntryBlock(entry)
     }
-
-    session.notes?.let {
-        CardDivider()
-        Text("训练备注", style = KtType.body.copy(fontWeight = FontWeight.SemiBold), color = colors.text.primary)
-        Text(it, style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.padding(top = KtSpacing.Gap.related))
-    }
 }
 
-/** 一个动作：名字、器械、逐组表格、动作自己的备注。 */
+/** 一个动作：名字、器械、逐组表格。 */
 @Composable
 private fun EntryBlock(entry: TrainingEntry) {
     val colors = ktColors
@@ -513,9 +511,6 @@ private fun EntryBlock(entry: TrainingEntry) {
         SetTableView(table, Modifier.padding(top = KtSpacing.Gap.control))
     } else if (entry.sets.isNotEmpty()) {
         Text("${entry.sets.size} 组", style = KtType.body, color = colors.text.primary, modifier = Modifier.padding(top = KtSpacing.Gap.related))
-    }
-    entry.notes?.let {
-        Text("备注：$it", style = KtType.secondary, color = colors.text.secondary, modifier = Modifier.padding(top = KtSpacing.Gap.control))
     }
 }
 

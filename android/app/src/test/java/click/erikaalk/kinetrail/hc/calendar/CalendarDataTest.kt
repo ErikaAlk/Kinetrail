@@ -32,7 +32,6 @@ class CalendarDataTest {
         assertEquals(3600, evening.durationSeconds)
         assertEquals(180.5, evening.caloriesKcal!!, 1e-9)
         assertEquals(7.5, evening.overallRpe!!, 1e-9)
-        assertTrue(evening.notes!!.contains("平均心率"))
         assertNull(evening.facility)
         assertEquals(listOf("高位下拉", "跑步机"), evening.entries.map { it.name })
         assertEquals("器械A", evening.entries[0].equipment)
