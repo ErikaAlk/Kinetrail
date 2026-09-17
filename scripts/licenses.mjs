@@ -35,6 +35,6 @@ const sections = [...packages].sort().map(([id, name]) => {
 
 writeFileSync(
   'THIRD_PARTY_NOTICES.md',
-  `# 第三方许可证\n\n由 \`node scripts/licenses.mjs\` 根据生产依赖闭包生成，只包含会打进 Worker 的运行时依赖。开发工具（wrangler、vitest、biome、typescript）不随产物分发。\n\n${sections.join('\n\n')}\n`,
+  `# 第三方许可证\n\n由 \`node scripts/licenses.mjs\` 根据生产依赖闭包生成，只包含会打进 Worker 的运行时依赖。开发工具（wrangler、vitest、biome、typescript）不随产物分发。Android App 用到的图标声明见 \`android/THIRD_PARTY_NOTICES.md\`。\n\n${sections.join('\n\n')}\n`,
 )
 console.log(`THIRD_PARTY_NOTICES.md: ${packages.size} packages`)

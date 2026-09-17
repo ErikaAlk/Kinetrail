@@ -103,7 +103,7 @@ async function weighIn(ownerId: string, timeMs: number, weightKg: number, n: num
           zone_offset_seconds: 28800,
           records: [
             { hc_id: uuid(n), type: 'weight', value: weightKg, last_modified_ms: timeMs + 10 },
-            { hc_id: uuid(n + 1), type: 'body_fat', value: 19, last_modified_ms: timeMs + 10 },
+            { hc_id: uuid(n + 1), type: 'body_fat', value: 21, last_modified_ms: timeMs + 10 },
           ],
         },
       ],
@@ -192,7 +192,7 @@ describe('日历读取入口', () => {
     // 没填热量的那天：小字为空，但训练要在
     const other = await record(ctx, '2026-09-16T19:00:00+08:00')
     await finalize(ctx, other, '2026-09-16T20:00:00+08:00')
-    await weighIn(ownerId, Date.parse('2026-09-14T22:30:00+08:00'), 63.1, 1)
+    await weighIn(ownerId, Date.parse('2026-09-14T22:30:00+08:00'), 70.2, 1)
 
     const { status, body } = await get(ownerId, SEPT)
     expect(status).toBe(200)
@@ -215,10 +215,10 @@ describe('日历读取入口', () => {
     expect(day.sessions[0].entries[0].normalized_sets).toBeUndefined()
 
     expect(day.measurements).toHaveLength(1)
-    expect(day.measurements[0].metrics.weight_kg).toBeCloseTo(63.1, 6)
-    expect(day.measurements[0].metrics.body_fat_pct).toBe(19)
+    expect(day.measurements[0].metrics.weight_kg).toBeCloseTo(70.2, 6)
+    expect(day.measurements[0].metrics.body_fat_pct).toBe(21)
     // 派生值与报告外的推算值照常给出，界面不用自己算
-    expect(day.measurements[0].metrics.fat_mass_kg).toBeCloseTo(63.1 * 0.19, 6)
+    expect(day.measurements[0].metrics.fat_mass_kg).toBeCloseTo(70.2 * 0.21, 6)
     expect(day.measurements[0].metrics.bmi).toBeGreaterThan(0)
 
     expect(dayOf(body, '2026-09-16').calories_kcal).toBeNull()
@@ -245,7 +245,7 @@ describe('日历读取入口', () => {
       ctx,
     )
     const weighed = Date.parse('2026-09-10T22:30:00+08:00')
-    await weighIn(ownerId, weighed, 63.1, 10)
+    await weighIn(ownerId, weighed, 70.2, 10)
     await ingestHealthConnect(
       env,
       ownerId,

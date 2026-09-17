@@ -10,7 +10,7 @@
 
 ## 开始前
 
-1. **用你自己的 Kinetrail 部署和令牌。** Kinetrail 只存一个人的数据（`CLAUDE.md`「只存本人」），不要把你的称重推到别人的实例里。部署按 `docs/operations.md` 第 2 节，推送令牌按第 9 节。手机端连哪个服务端写死在 `android/.../HealthSync.kt` 的 `KINETRAIL_ORIGIN`，改成你的域名；`wrangler.jsonc` 里的 `HC_ACCEPT_AFTER`、`HC_PROFILE_REF`、`HC_HEIGHT_CM` 换成你自己的。
+1. **用你自己的 Kinetrail 部署和令牌。** Kinetrail 只存一个人的数据（`CLAUDE.md`「只存本人」），不要把你的称重推到别人的实例里。部署按 `docs/operations.md` 第 2 节，推送令牌按第 9 节。手机端连哪个服务端写在 `android/local.properties` 的 `kinetrail.origin`；服务端配置在你自己的 `wrangler.local.jsonc` 里填。
 2. 读 `CLAUDE.md` 的不变量，尤其是 Health Connect 推送和识图报告两条。
 3. 读 `research/HEALTHCONNECT.md` 第 1、3、5、6 节：FitDays+ 就是这样一步步核实、适配的，S800 照同样的路走。规范摘要在 `DATA_CONTRACT.md` 第 8 节。
 

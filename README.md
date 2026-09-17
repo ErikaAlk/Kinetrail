@@ -17,7 +17,7 @@
 | 生产 bundle 与官方 MCP Inspector 互通 | 已验证（合成数据，见 `research/production-inspector-results.json`） |
 | 加密 + 签名备份 → 验签解密 → 隔离库恢复 → 校验 | 本地演练通过（含篡改拒绝） |
 | 独立审查（Claude 子代理，四轮） | 各轮发现均已修复并有回归测试；第四轮修复后未再送审 |
-| 云端部署 `https://kinetrail.erikaalk.click`（D1 迁移、Access OIDC 应用、DO alarm 定时调度） | 已部署；本人身份已绑定，ChatGPT 已连接；真实同步已发布，只存本人（Erika）数据，其他家庭成员数据已删除 |
+| 云端部署（自定义域名，D1 迁移、Access OIDC 应用、DO alarm 定时调度） | 已部署；本人身份已绑定，ChatGPT 已连接；真实同步已发布，只存本人数据，其他家庭成员数据已删除 |
 | G1 真实 FitDays CN、G2 云端容量与恢复、G3 真实 Access/CIMD/ChatGPT、G4/G5 “减肥计划”双聊天 | **未验证** |
 
 未通过 G1–G5 前不是生产可用版本。
@@ -74,6 +74,10 @@ assets/            图标（icon.svg 源文件、icon-256.png 供 ChatGPT 连接
 
 - [架构决策](ARCHITECTURE_DECISION.md)、[数据契约](DATA_CONTRACT.md)、[MCP 契约](MCP_CONTRACT.md)、[实施计划](IMPLEMENTATION_PLAN.md)
 - [运维手册](docs/operations.md)
-- [第三方许可证](THIRD_PARTY_NOTICES.md)
+- [第三方许可证](THIRD_PARTY_NOTICES.md)、[Android App 第三方声明](android/THIRD_PARTY_NOTICES.md)
 
-`sanitized-fixtures/` 全部是人工合成数据。`research/spike/worker.mjs` 含合成测试授权入口，禁止部署。
+`sanitized-fixtures/` 全部是人工合成数据。`research/spike/worker.mjs` 含合成测试授权入口，禁止部署。测试与样本里的体测读数都是合成值。
+
+## 协议
+
+[PolyForm Noncommercial License 1.0.0](LICENSE.md)。非商业目的可以使用、修改和分发，包括个人学习研究、兴趣项目，以及慈善组织、教育和公共研究机构、政府机构使用；任何商业用途都不在授权范围内。它不是 OSI 定义的开源协议。第三方组件保留各自的协议，见上面两份第三方声明。

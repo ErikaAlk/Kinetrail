@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -5,6 +6,13 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// 服务端地址不进仓库：写在 android/local.properties 的 kinetrail.origin（和 sdk.dir 同一个文件，git 忽略）。
+val kinetrailOrigin: String = Properties()
+    .apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }
+    .getProperty("kinetrail.origin")?.trim()?.trimEnd('/')
+    ?.takeIf { it.startsWith("https://") }
+    ?: throw GradleException("android/local.properties 里要有 kinetrail.origin=https://<你的 Kinetrail 域名>")
 
 android {
     namespace = "click.erikaalk.kinetrail.hc"
@@ -19,6 +27,7 @@ android {
         versionName = "0.7.0"
         // 本人手机是 arm64；x86_64 留给模拟器验证识图。ML Kit 中文识别模型按 ABI 打包，不留其他架构。
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        buildConfigField("String", "KINETRAIL_ORIGIN", "\"$kinetrailOrigin\"")
     }
 
     buildFeatures {

@@ -152,8 +152,8 @@ V2 再加后台：`getFeatureStatus` 支持后台读时申请该权限，WorkMan
       "time_ms": 1789453352000,
       "zone_offset_seconds": 28800,
       "records": [
-        { "hc_id": "f1610abf-8061-4fd5-8d7c-0f7a0cffe707", "type": "weight", "value": 63.099998474121094, "last_modified_ms": 1789453353143 },
-        { "hc_id": "4cbcbd0c-225f-4e4f-bdb5-dd4ad815960d", "type": "body_fat", "value": 19, "last_modified_ms": 1789453353144 }
+        { "hc_id": "00000000-0000-4000-8000-000000000001", "type": "weight", "value": 70.19999694824219, "last_modified_ms": 1789453353143 },
+        { "hc_id": "00000000-0000-4000-8000-000000000002", "type": "body_fat", "value": 21, "last_modified_ms": 1789453353144 }
       ]
     }
   ],
@@ -187,11 +187,11 @@ Schema（全部 `additionalProperties:false`，没有自由字符串）：`schem
 | --- | --- |
 | `sync_batches` | 每次推送一个批次：`mode='incremental'`、`source_region='health_connect'`、`counts_json` 记 `weight`/`rejected`/`deletions_matched`/`deletions_unmatched`；没有有效组、删除和报告时不建批次（只含报告的请求也建批次，2026-09-15 起） |
 | `raw_records.dataset` | `weight`，现有查询和趋势不用改 |
-| `profile_ref` | 变量 `HC_PROFILE_REF` = 现有本人 `p_914ea14c79915f2f`。依据是 FitDays+ 只为主用户写 HC（静态分析 + G-HC3），且用户改用主用户称重；主用户资料必须是本人的 |
+| `profile_ref` | 变量 `HC_PROFILE_REF` = 现有本人的 profile_ref。依据是 FitDays+ 只为主用户写 HC（静态分析 + G-HC3），且用户改用主用户称重；主用户资料必须是本人的 |
 | `source_record_id` | `hc:cn.icomon.fitdayspro:<time_ms>`，`identity_kind='source_id'`；`source_data_id` 存体重记录的 `hc_id` |
 | `raw_json` | 规范化整组 `{source, origin, time_ms, zone_offset_seconds, records, deleted_records}`：记录按 `(type, hc_id)` 码点排序，保留 HC 返回的 double 原值。内容相同 → `raw_hash` 相同 → 只更新 `last_seen`，重发天然幂等，不需要收据表 |
 | `measured_at` / `local_date` | `floor(time_ms / 1000)`；本地日期按 Asia/Shanghai |
-| `metrics_json` | `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制（63.099998474121094 → 63.1）；`body_water_pct` = 水分质量 ÷ 体重 × 100 保留 2 位小数，标 `body_water_pct_derived_from_mass`；`bmi` = 体重 ÷ (`HC_HEIGHT_CM`/100)² 保留 1 位小数（用户提供身高 164 cm，2026-09-15），标 `bmi_derived_from_height`。去脂体重与水分质量只在 raw 里，不新增索引指标；`formula_version` 仍为 `body_v1` |
+| `metrics_json` | `weight_kg`、`body_fat_pct`、`bone_mass_kg`、`bmr_kcal`、`heart_rate_bpm`；恰好是 float32 的值取最短十进制（形如 70.19999694824219 → 70.2）；`body_water_pct` = 水分质量 ÷ 体重 × 100 保留 2 位小数，标 `body_water_pct_derived_from_mass`；`bmi` = 体重 ÷ (`HC_HEIGHT_CM`/100)² 保留 1 位小数（用户提供身高，2026-09-15），标 `bmi_derived_from_height`。去脂体重与水分质量只在 raw 里，不新增索引指标；`formula_version` 仍为 `body_v1` |
 | `quality_flags` | 恒含 `source_health_connect` |
 | `is_deleted` | 组内没有有效体重记录时为 1（整次测量作废，默认查询排除，`include_deleted` 可见 tombstone） |
 
@@ -297,15 +297,15 @@ Schema（全部 `additionalProperties:false`，没有自由字符串）：`schem
 | `recording_method` / `device` | 0（未知）/ null | 没有设备信息，`device_ref` 为空 |
 | 30 天内其他记录 | 无 | 印证不回填历史 |
 
-数值有 float32 痕迹：体重 `63.099998474121094`、骨量 `3.4000000953674316` 恰好是 float32 值，最短十进制为 63.1、3.4；水分 `37.481400056457495` = 63.1 × 59.4%，说明 App 按 1 位小数的水分百分比换算；去脂体重 51.1 已按 1 位小数取整；体脂率 `19`、BMR `1473` 是整数。设计相应调整：
+数值有 float32 痕迹：体重、骨量恰好是 float32 值（形如 `70.19999694824219`，最短十进制为 70.2）；水分质量不是 float32，正好等于体重 × 1 位小数的水分百分比，说明 App 按百分比换算；去脂体重已按 1 位小数取整；体脂率、BMR 是整数。（这里的数值示例是合成的，实测读数不入库。）设计相应调整：
 
 - raw 保留 HC 返回的 double 原值，不改写。
-- 索引值：恰好是 float32 的取 float32 最短十进制（63.1），其他按原值；`body_water_pct` 由水分质量 ÷ 体重（均已归一）× 100 后保留 2 位小数，这次得 59.40。
-- 体脂率不是整数：G-HC4 那次称重读到 `18.4`，所以上面的 `19` 就是 19.0，精度 1 位小数。体重是 2 位小数值的 float32（`63.04999923706055` → 63.05）。
+- 索引值：恰好是 float32 的取 float32 最短十进制（如 70.2），其他按原值；`body_water_pct` 由水分质量 ÷ 体重（均已归一）× 100 后保留 2 位小数，这次得到的值与手机上显示的水分率一致。
+- 体脂率不是整数：G-HC4 那次称重读到带 1 位小数的体脂率，所以整数读数就是 x.0，精度 1 位小数。体重是 2 位小数值的 float32（形如 `70.3499984741211` → 70.35）。
 
 ### G-HC4 结果（2026-09-15，读取工具变更记录 + 用户操作）
 
-变更基线建立于 15:14。用户在 16:54 与 17:01 各称一次（数值相同，63.05 kg / 18.4%），其间开关飞行模式，读变更，再在 FitDays+ 里做删除操作后读变更。
+变更基线建立于 15:14。用户在 16:54 与 17:01 各称一次（数值相同），其间开关飞行模式，读变更，再在 FitDays+ 里做删除操作后读变更。
 
 **更正（2026-09-15 晚）**：最初把 16:54 当成飞行模式下的称重，据此写了“称重当下写入，不依赖联网”，这个推断没有核实，是错的。HC“近期数据访问情况”显示 FitDays+ 当天只在 16:54 写入；17:01 那条在 FitDays+ 历史里有，HC 与 D1 首次同步都没有。用户随后又试两次，得出写入条件：
 
@@ -339,7 +339,7 @@ G-HC2 到 G-HC4 要看记录 ID 和精确时间戳时，用第 2 节的最小读
 
 - 报告是 `ICAFReportDataShowActivity` 调 `ICERDrawReport`（`b.b` 画布）画出来的位图，标题栏有分享按钮，版式固定。
 - 检测时间：`setTest_time(p.b.H(measure_time))`，`H()` 在中文下是 `SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())`，按设备时区截断到分钟。HC 写入用的是同一个 `measure_time` 秒值，所以“同一分钟 + 体重相同”能唯一对应到一组 HC 记录；报告时间不会四舍五入到下一分钟。
-- 线上 D1 里有 20:42:50 与 20:43:44 两组数值完全相同的称重（2026-09-15），报告 20:43 按截断只对应后一组。如果按四舍五入，两组都可能是 20:43——这也是多候选时必须拒绝的原因。那份报告的体重 63.90、体脂率 19.3%、骨量 3.5、基础代谢 1484、去脂体重 51.7 与该组 HC 记录逐项一致。
+- 线上 D1 里有 20:42:50 与 20:43:44 两组数值完全相同的称重（2026-09-15），报告 20:43 按截断只对应后一组。如果按四舍五入，两组都可能是 20:43——这也是多候选时必须拒绝的原因。那份报告的体重、体脂率、骨量、基础代谢、去脂体重与该组 HC 记录逐项一致。
 - 报告数值的来源：脂肪量 = pbf × 体重 / 100，蛋白质、水分、骨骼肌量同样由百分比乘体重算出；分段读数来自 `ICAFElectrode`，左列画左臂/左腿；阻抗来自 `K(imps)`，会重排并对部分分段乘 0.826，有 15 个值时多画一行 5 kHz。
 
 ### 识图放在手机上

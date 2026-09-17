@@ -14,3 +14,6 @@ android/.kotlin/
 android/**/build/
 android/local.properties
 *.apk
+# 本人实例的真实账户、域名与资源 ID
+wrangler.local.jsonc
+*.local.md

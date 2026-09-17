@@ -433,7 +433,7 @@ private fun CardDivider() {
     RowDivider(Modifier.padding(vertical = KtSpacing.Gap.control), inset = 0.dp)
 }
 
-/** 数值大、单位小，按基线对齐：「77 分钟」「1 分 30 秒」「63.35 kg」。 */
+/** 数值大、单位小，按基线对齐：「77 分钟」「1 分 30 秒」「71.85 kg」。 */
 @Composable
 private fun Readings(readings: List<Reading>, valueStyle: TextStyle, modifier: Modifier = Modifier) {
     val colors = ktColors

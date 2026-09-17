@@ -124,7 +124,7 @@ fun monthGrid(month: YearMonth): List<LocalDate?> {
     return cells
 }
 
-/** 去掉多余的零：63.10 → 63.1，420.0 → 420。 */
+/** 去掉多余的零：70.20 → 70.2，420.0 → 420。 */
 fun num(value: Double): String {
     // 固定用 Locale.US：小数点必须是「.」，不跟着系统区域变成逗号。
     val text = String.format(Locale.US, "%.2f", value)

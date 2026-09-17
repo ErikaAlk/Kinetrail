@@ -56,9 +56,9 @@ class CalendarDataTest {
         assertEquals(22, measurement.measuredAt!!.hour)
         assertEquals(
             listOf(
-                MetricGroup(null, listOf(MetricRow("体脂率", Reading("19", "%")), MetricRow("BMI", Reading("23.5", "")))),
-                MetricGroup("脂肪", listOf(MetricRow("脂肪量", Reading("11.99", "kg")))),
-                MetricGroup("肌肉与骨骼", listOf(MetricRow("去脂体重", Reading("51.11", "kg")))),
+                MetricGroup(null, listOf(MetricRow("体脂率", Reading("21", "%")), MetricRow("BMI", Reading("22.9", "")))),
+                MetricGroup("脂肪", listOf(MetricRow("脂肪量", Reading("14.74", "kg")))),
+                MetricGroup("肌肉与骨骼", listOf(MetricRow("去脂体重", Reading("55.46", "kg")))),
             ),
             metricGroups(measurement.metrics),
         )
@@ -67,7 +67,7 @@ class CalendarDataTest {
 
     @Test
     fun `没见过的指标按原键名排在其他读数最后，不会丢，也不猜单位`() {
-        val groups = metricGroups(mapOf("weight_kg" to 63.1, "zz_new_metric" to 7.0, "whr" to 0.82))
+        val groups = metricGroups(mapOf("weight_kg" to 70.2, "zz_new_metric" to 7.0, "whr" to 0.82))
         assertEquals(
             listOf(MetricGroup("其他读数", listOf(MetricRow("腰臀比", Reading("0.82", "")), MetricRow("zz_new_metric", Reading("7", ""))))),
             groups,
@@ -83,8 +83,8 @@ class CalendarDataTest {
 
     @Test
     fun `只有体重、BMI、心率这类非阻抗读数时不算 BIA`() {
-        assertFalse(hasBiaMetrics(mapOf("weight_kg" to 63.1, "bmi" to 22.0, "heart_rate_bpm" to 70.0, "zz_new_metric" to 1.0)))
-        assertTrue(hasBiaMetrics(mapOf("weight_kg" to 63.1, "body_water_pct" to 52.0)))
+        assertFalse(hasBiaMetrics(mapOf("weight_kg" to 70.2, "bmi" to 22.0, "heart_rate_bpm" to 70.0, "zz_new_metric" to 1.0)))
+        assertTrue(hasBiaMetrics(mapOf("weight_kg" to 70.2, "body_water_pct" to 52.0)))
     }
 
     @Test
@@ -168,7 +168,7 @@ class CalendarDataTest {
 
     @Test
     fun `数值去掉多余的零，整数不被截断`() {
-        assertEquals("63.1", num(63.1))
+        assertEquals("70.2", num(70.2))
         assertEquals("19", num(19.0))
         assertEquals("100", num(100.0))
         assertEquals("11.99", num(11.989))
