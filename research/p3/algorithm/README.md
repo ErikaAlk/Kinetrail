@@ -50,3 +50,14 @@ JNI 才能按 `Java_com_icomon_icbodyfatalgorithms_ICBodyFatAlgorithms_native_1c
 
 里面那两个静态方法 `getKeysFromMap` 和 `getObjectType` 不是摆设：**native 靠回调它们遍历传进去的
 map**。少了它们，`native_calc` 返回的 map 字段齐全但全是零，而且不抛任何异常。
+
+## 重新生成参考向量
+
+`Vectors.java` 跑一个确定性的合成输入网格（四档身高 × 四档年龄 × 四档体重 × 三组阻抗
+× 性别 × 体型 = 768 条），每行输出一条 JSON，用来给 `../wla37.py` 对账：
+
+```bash
+adb shell "CLASSPATH=/data/local/tmp/harness.jar app_process /data/local/tmp com.icomon.icbodyfatalgorithms.Vectors /data/local/tmp/libICBodyFatAlgorithms.so 36" | tr -d '' > vectors.jsonl
+```
+
+仓库里的 `../wla37-vectors.jsonl` 是其中的一个子集（192 条，保留全部身高和三档阻抗）。

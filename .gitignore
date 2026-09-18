@@ -17,3 +17,6 @@ android/local.properties
 # 本人实例的真实账户、域名与资源 ID
 wrangler.local.jsonc
 *.local.md
+
+# Python
+__pycache__/
