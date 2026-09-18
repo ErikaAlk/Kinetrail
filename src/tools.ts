@@ -22,7 +22,10 @@ import {
   startWorkoutSession,
 } from './workouts'
 
-const BIA_NOTE = '体脂秤 BIA 数值适合看趋势，不是医疗诊断。'
+const BIA_NOTE =
+  '体脂秤 BIA 数值适合看趋势，不是医疗诊断。独立信息只有体重和体脂率两项：' +
+  '水分、蛋白质、骨量、肌肉、去脂体重、基础代谢都是秤按固定比例从这两项算出来的，' +
+  '彼此不是独立证据，不要拿它们互相印证。'
 const RANGE_NOTE = 'start/end 为带时区偏移的 RFC3339，半开区间 [start,end)。'
 
 export const TOOLS: ToolDefinition[] = [
