@@ -1,16 +1,24 @@
 """沃莱 P3 的 BLE 帧解码：字节 -> 体重 + 阻抗。协议见 ../P3.md。
 
-不依赖第三方库，不做 I/O。直接跑这个文件会用合成帧自检：
+不依赖第三方库。直接跑这个文件会用合成帧自检：
 
     python research/p3/decode.py
+
+带上 `probe.py` 打出来的十六进制帧则解一帧，按段位列出阻抗：
+
+    python research/p3/decode.py 00001f00a76a...
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import List, Optional
 
 TYPE_WEIGHT = 0xA2
 TYPE_RESULT = 0xA7
+
+#: 阻抗下标 -> 段位。前五个 20 kHz，后五个同段的 100 kHz，见 ../P3.md 第 2 节。
+SEGMENTS = ("躯干", "左臂", "右臂", "左腿", "右腿")
 
 
 @dataclass(frozen=True)
@@ -85,5 +93,27 @@ def _self_check() -> None:
     print("ok")
 
 
+def _dump(hexstr: str) -> None:
+    """解一帧并按段位打印，方便和报告页的「分部位阻抗」逐行对号。"""
+    payload = frame_payload(bytes.fromhex(hexstr.replace(":", "").replace(" ", "")))
+    m = decode(payload) if payload else None
+    if m is None:
+        print("校验和不过，或不是 A2/A7 帧")
+        return
+    print(f"体重 {m.weight_kg:.3f} kg" + (f"  算法号 {m.alg_type}" if m.alg_type else ""))
+    if len(m.impedances_ohm) == 2 * len(SEGMENTS):
+        print(f"{'段位':<6}{'20 kHz':>10}{'100 kHz':>10}")
+        for i, name in enumerate(SEGMENTS):
+            print(f"{name:<6}{m.impedances_ohm[i]:>10.1f}"
+                  f"{m.impedances_ohm[i + len(SEGMENTS)]:>10.1f}")
+    elif m.impedances_ohm:
+        print(f"{len(m.impedances_ohm)} 个阻抗（不是 10 个，段位未知）"
+              f"：{m.impedances_ohm}")
+
+
 if __name__ == "__main__":
-    _self_check()
+    if len(sys.argv) > 1:
+        for arg in sys.argv[1:]:
+            _dump(arg)
+    else:
+        _self_check()
