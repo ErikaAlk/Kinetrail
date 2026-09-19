@@ -22,45 +22,53 @@ data class Segments<T>(val leftArm: T, val rightArm: T, val trunk: T, val leftLe
     fun toList() = listOf("left_arm" to leftArm, "right_arm" to rightArm, "trunk" to trunk, "left_leg" to leftLeg, "right_leg" to rightLeg)
 }
 
+/**
+ * 只有检测时间和体重是必需的（服务端靠这两项把报告挂到那次称重上，见 src/ingest.ts 的 REPORT_SCHEMA）。
+ * 其余字段没认出来就是 null，不上传这一项——不为了一个读不出的指标把整张报告作废。
+ */
 data class BodyReport(
     /** 报告上的检测时间，只到分钟，设备时区。 */
     val measuredAt: LocalDateTime,
-    val age: Int,
-    val heightCm: Double,
-    val bodyScore: Double,
     val weight: Measured,
-    val bodyFat: Measured,
-    val boneMass: Measured,
-    val protein: Measured,
-    val bodyWater: Measured,
-    val muscle: Measured,
-    val skeletalMuscle: Measured,
-    val bodyFatPct: Double,
-    val boneMassPct: Double,
-    val proteinPct: Double,
-    val bodyWaterPct: Double,
-    val musclePct: Double,
-    val skeletalMusclePct: Double,
-    val bmi: Double,
-    val obesityDegreePct: Double,
-    val targetWeight: Double,
-    val weightControl: Double,
-    val fatControl: Double,
-    val muscleControl: Double,
-    val visceralFat: Double,
-    val bmr: Double,
-    val fatFreeMass: Double,
-    val subcutaneousFatPct: Double,
-    val smi: Double,
-    val bodyAge: Double,
-    val whr: Double,
+    val age: Int?,
+    val heightCm: Double?,
+    val bodyScore: Double?,
+    val bodyFat: Measured?,
+    val boneMass: Measured?,
+    val protein: Measured?,
+    val bodyWater: Measured?,
+    val muscle: Measured?,
+    val skeletalMuscle: Measured?,
+    val bodyFatPct: Double?,
+    val boneMassPct: Double?,
+    val proteinPct: Double?,
+    val bodyWaterPct: Double?,
+    val musclePct: Double?,
+    val skeletalMusclePct: Double?,
+    val bmi: Double?,
+    val obesityDegreePct: Double?,
+    val targetWeight: Double?,
+    val weightControl: Double?,
+    val fatControl: Double?,
+    val muscleControl: Double?,
+    val visceralFat: Double?,
+    val bmr: Double?,
+    val fatFreeMass: Double?,
+    val subcutaneousFatPct: Double?,
+    val smi: Double?,
+    val bodyAge: Double?,
+    val whr: Double?,
     val segmentFat: Segments<SegmentValue>?,
     val segmentMuscle: Segments<SegmentValue>?,
     /** 键是频率（kHz）。报告里的阻抗是 FitDays+ 的显示值，不是秤的原始 imps。 */
     val impedance: Map<Int, Segments<Double>>?,
 )
 
-data class ParseResult(val report: BodyReport?, val problems: List<String>) {
+/**
+ * [problems] 是拦下上传的硬问题：不是这份报告、必需字段没读出、报告内部的算术对不上（多半是数字读错了）。
+ * [missed] 是没认出的可选指标，不拦上传，但核对页要列出来——报告挂上去之后不可改，缺的补不回来。
+ */
+data class ParseResult(val report: BodyReport?, val problems: List<String>, val missed: List<String> = emptyList()) {
     val uploadable get() = report != null && problems.isEmpty()
 }
 
@@ -70,6 +78,9 @@ private fun normalize(text: String) = text
     .replace(WHITESPACE, "").replace(Regex("[|｜丨]"), "")
     .replace('（', '(').replace('）', ')').replace('：', ':').replace('／', '/').replace('％', '%')
     .replace(Regex("[一—–－−](?=\\d)"), "-")
+    // 实测小数点读成逗号（真机「45.9」→「45,9」、模拟器 BMI 刻度「30.0」→「30,0」）。只换数字之间的：
+    // 不换回来就只截到小数点前那一段，再按丢小数点还原会差十倍；报告上的数字没有千位分隔符，数字之间不会有真逗号。
+    .replace(Regex("(?<=\\d)[,，、。·](?=\\d)"), ".")
 
 private val NUMBER = Regex("\\d+(?:\\.\\d+)?")
 private val SIGNED = Regex("-?\\d+(?:\\.\\d+)?")
@@ -96,26 +107,44 @@ private fun restoreDecimal(text: String, decimals: Int = 1): Double {
     return value / scale
 }
 
-// ML Kit 在报告衬线字体上读错的形近字（模拟器实测 2026-09-15）：体→休、控→挖、肉→內、衡→衝。
-// 「肉」还会读成「内」（肌内型），但「内脏」是真的「内」，不能全局换回，交给下面的一字容错。
-private val LOOKALIKES = mapOf('休' to '体', '挖' to '控', '內' to '肉', '衝' to '衡')
+/**
+ * ML Kit 在报告的衬线字体上分不清的字，同一组归到一个代表字再比较（组内第一个字是代表）。
+ * 实测的读法：体→休、控→挖、肉→內、衡→衝、成→咸、率→奉/牽、抗→坑、间→闻，以及一批简体读成繁体
+ * （龄→齡、级→級、测→測）。按组归一而不是逐个记「这次读错成什么」：同一台手机每份报告错得都不一样，
+ * 一次记一个补丁永远追不上。归一后同组的字彼此不再算差异，剩下没见过的错由下面的一处容错兜住。
+ */
+private val CONFUSABLE = listOf(
+    "体休體", "内內肉", "龄齡", "级級", "衡衝", "控挖", "率奉牽", "抗坑", "测測", "间間闻",
+    "成咸", "质質", "础礎", "脏臟", "标標", "准準", "范範", "围圍", "评評", "电電", "躯軀", "谢謝", "检檢",
+)
+private val CANONICAL: Map<Char, Char> = buildMap { for (group in CONFUSABLE) for (c in group) put(c, group[0]) }
+private fun canonical(text: String) = String(CharArray(text.length) { CANONICAL[text[it]] ?: text[it] })
+
+/** 编辑距离，只用在四个字以上的标签上，阈值 1。 */
+private fun distance(a: String, b: String): Int {
+    var prev = IntArray(b.length + 1) { it }
+    for (i in 1..a.length) {
+        val cur = IntArray(b.length + 1)
+        cur[0] = i
+        for (j in 1..b.length) {
+            cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+        }
+        prev = cur
+    }
+    return prev[b.length]
+}
 
 /**
- * 标签比较：先换回形近字；四个字以上的标签再容忍一处读错、多认或少认一个字
+ * 标签比较：先按字形归一，四个字以上的标签再容忍一处读错、多认或少认一个字
  * （真机实测把「肌肉均衡」读成「肌肉內均衡」、「生物电阻抗」读成「生物电阻坑」）。
- * 同一分区里的标签彼此至少差两处，所以这点容忍不会把两个标签认混。
+ * 阈值只能是 1：「分段脂肪分析」与「肌肉脂肪分析」就差两个字，放宽到 2 会认混。
  */
 private fun sameLabel(text: String, label: String): Boolean {
-    val t = String(CharArray(text.length) { LOOKALIKES[text[it]] ?: text[it] })
-    if (t == label) return true
-    if (label.length < 4 || abs(t.length - label.length) > 1) return false
-    if (t.length == label.length) return t.indices.count { t[it] != label[it] } <= 1
-    val short = if (t.length < label.length) t else label
-    val long = if (t.length < label.length) label else t
-    var i = 0
-    while (i < short.length && short[i] == long[i]) i++
-    // 跳过多出来的那个字，剩下的必须完全一致
-    return short.substring(i) == long.substring(i + 1)
+    val t = canonical(text)
+    val l = canonical(label)
+    if (t == l) return true
+    if (l.length < 4 || abs(t.length - l.length) > 1) return false
+    return distance(t, l) <= 1
 }
 
 object ReportParser {
@@ -125,11 +154,19 @@ object ReportParser {
 
 private class Parser(private val lines: List<OcrLine>, width: Float) {
     private val problems = mutableListOf<String>()
+    private val missed = mutableListOf<String>()
     /** 行带容差、分列边距都按图宽取比例，缩放过的分享图也能用。 */
     private val margin = width * 0.01f
     private val pageBottom = (lines.maxOfOrNull { it.bottom } ?: 0f) + 1f
 
+    /** 可选指标没认出：这一项不上传，其余照常。 */
     private fun missing(what: String): Nothing? {
+        missed += what
+        return null
+    }
+
+    /** 必需项没认出：服务端挂不上，整张拦下。 */
+    private fun required(what: String): Nothing? {
         problems += "没认出$what"
         return null
     }
@@ -185,7 +222,7 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
         fun match(regex: Regex) = lines.firstNotNullOfOrNull { regex.find(it.norm) } ?: regex.find(readingOrder)
         val time = match(TIME)?.destructured?.let { (y, mo, d, h, mi) ->
             runCatching { LocalDateTime.of(y.toInt(), mo.toInt(), d.toInt(), h.toInt(), mi.toInt()) }.getOrNull()
-        } ?: missing("检测时间")
+        } ?: required("检测时间")
         // 真机实测读成繁体「年齡」，冒号也可能读丢或读成别的符号
         val age = match(Regex("年[龄齡][^\\d]{0,2}(\\d{1,3})(?![\\d.])"))?.groupValues?.get(1)?.toInt()
             ?: missing("年龄")
@@ -194,14 +231,15 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
 
         // 身体成分分析：测量(kg) (范围) | 重量比例(%) | 评估
         val compPool = region(left, composition.bottom, muscleFat.top)
-        fun measured(label: String, valueDecimals: Int, vararg names: String): Pair<Measured, Double>? {
-            val n = row(compPool, *names) ?: return missing(label)
-            if (n.size < 4) return missing("${label}的全部读数")
+        fun measured(label: String, valueDecimals: Int, vararg names: String, must: Boolean = false): Pair<Measured, Double>? {
+            fun absent(what: String) = if (must) required(what) else missing(what)
+            val n = row(compPool, *names) ?: return absent(label)
+            if (n.size < 4) return absent("${label}的全部读数")
             // 范围与比例都是一位小数，只有体重那一格是两位
             return Measured(restoreDecimal(n[0], valueDecimals), restoreDecimal(n[1]), restoreDecimal(n[2])) to
                 restoreDecimal(n[3])
         }
-        val weight = measured("体重", 2, "体重")
+        val weight = measured("体重", 2, "体重", must = true)
         val fat = measured("体脂", 1, "体脂", "体脂肪")
         val bone = measured("骨重量", 1, "骨重量", "骨量")
         val protein = measured("蛋白质", 1, "蛋白质")
@@ -272,20 +310,21 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
             impedance(region(left, h.bottom, bottom))
         }
 
-        if (problems.isNotEmpty()) return ParseResult(null, problems)
+        if (time == null || weight == null || problems.isNotEmpty()) return ParseResult(null, problems, missed)
         val report = BodyReport(
-            measuredAt = time!!, age = age!!, heightCm = height!!, bodyScore = bodyScore!!,
-            weight = weight!!.first, bodyFat = fat!!.first, boneMass = bone!!.first, protein = protein!!.first,
-            bodyWater = water!!.first, muscle = muscle!!.first, skeletalMuscle = skeletal!!.first,
-            bodyFatPct = fat.second, boneMassPct = bone.second, proteinPct = protein.second,
-            bodyWaterPct = water.second, musclePct = muscle.second, skeletalMusclePct = skeletal.second,
-            bmi = bmi!!, obesityDegreePct = obesity!!,
-            targetWeight = target!!, weightControl = weightControl!!, fatControl = fatControl!!, muscleControl = muscleControl!!,
-            visceralFat = visceral!!, bmr = bmr!!, fatFreeMass = fatFree!!, subcutaneousFatPct = subcutaneous!!,
-            smi = smi!!, bodyAge = bodyAge!!, whr = whr!!,
+            measuredAt = time, weight = weight.first,
+            age = age, heightCm = height, bodyScore = bodyScore,
+            bodyFat = fat?.first, boneMass = bone?.first, protein = protein?.first,
+            bodyWater = water?.first, muscle = muscle?.first, skeletalMuscle = skeletal?.first,
+            bodyFatPct = fat?.second, boneMassPct = bone?.second, proteinPct = protein?.second,
+            bodyWaterPct = water?.second, musclePct = muscle?.second, skeletalMusclePct = skeletal?.second,
+            bmi = bmi, obesityDegreePct = obesity,
+            targetWeight = target, weightControl = weightControl, fatControl = fatControl, muscleControl = muscleControl,
+            visceralFat = visceral, bmr = bmr, fatFreeMass = fatFree, subcutaneousFatPct = subcutaneous,
+            smi = smi, bodyAge = bodyAge, whr = whr,
             segmentFat = segmentFat, segmentMuscle = segmentMuscle, impedance = impedance,
         )
-        return ParseResult(report, ReportChecks.problems(report))
+        return ParseResult(report, ReportChecks.problems(report), missed)
     }
 
     /** 分段读数：「0.6kg」与「103.8%」各 5 个，按上中下三排（2/1/2）排好，排内左小右大。 */
@@ -335,32 +374,54 @@ private class Parser(private val lines: List<OcrLine>, width: Float) {
     }
 }
 
-/** 报告内部的算术关系。OCR 读错一位小数时几乎总会破坏其中一条。容差只吸收显示舍入。 */
+/**
+ * 报告内部的算术关系。OCR 读错一位小数时几乎总会破坏其中一条。容差只吸收显示舍入。
+ * 没认出的指标是 null：跳过它参与的校验，别的照查——读不到和读错是两回事，只有读错才拦上传。
+ */
 object ReportChecks {
     fun problems(r: BodyReport): List<String> = buildList {
         fun near(a: Double, b: Double, tolerance: Double) = abs(a - b) <= tolerance + 1e-9
-        fun bounded(label: String, v: Double, min: Double, max: Double) {
-            if (v < min || v > max) add("$label ${fmt(v)} 超出合理范围")
+        fun bounded(label: String, v: Double?, min: Double, max: Double) {
+            if (v != null && (v < min || v > max)) add("$label ${fmt(v)} 超出合理范围")
         }
-        bounded("体重", r.weight.value, 2.0, 400.0)
+        val weight = r.weight.value
+        bounded("体重", weight, 2.0, 400.0)
         bounded("身高", r.heightCm, 50.0, 250.0)
-        bounded("年龄", r.age.toDouble(), 0.0, 150.0)
+        bounded("年龄", r.age?.toDouble(), 0.0, 150.0)
         listOf(
             Triple("体脂", r.bodyFat, r.bodyFatPct), Triple("骨重量", r.boneMass, r.boneMassPct),
             Triple("蛋白质", r.protein, r.proteinPct), Triple("身体水份", r.bodyWater, r.bodyWaterPct),
             Triple("肌肉", r.muscle, r.musclePct), Triple("骨骼肌率", r.skeletalMuscle, r.skeletalMusclePct),
         ).forEach { (label, m, pct) ->
             bounded("${label}比例", pct, 0.0, 100.0)
-            if (!near(m.value / r.weight.value * 100, pct, 0.2)) add("$label ${fmt(m.value)} kg 与 ${fmt(pct)}% 对不上")
+            if (m != null && pct != null && !near(m.value / weight * 100, pct, 0.2)) {
+                add("$label ${fmt(m.value)} kg 与 ${fmt(pct)}% 对不上")
+            }
         }
         listOf("体重" to r.weight, "体脂" to r.bodyFat, "骨重量" to r.boneMass, "蛋白质" to r.protein,
             "身体水份" to r.bodyWater, "肌肉" to r.muscle, "骨骼肌率" to r.skeletalMuscle).forEach { (label, m) ->
-            if (m.min > m.max || m.max > 400) add("$label 的标准范围 ${fmt(m.min)}–${fmt(m.max)} 不合理")
+            if (m != null && (m.min > m.max || m.max > 400)) add("$label 的标准范围 ${fmt(m.min)}–${fmt(m.max)} 不合理")
         }
-        if (!near(r.fatFreeMass, r.weight.value - r.bodyFat.value, 0.15)) add("去脂体重 ${fmt(r.fatFreeMass)} kg 与体重减体脂对不上")
-        if (!near(r.weightControl, r.targetWeight - r.weight.value, 0.15)) add("体重控制 ${fmt(r.weightControl)} kg 与目标体重对不上")
-        if (!near(r.fatControl + r.muscleControl, r.weightControl, 0.15)) add("脂肪控制与肌肉控制之和不等于体重控制")
-        if (!near(r.bmi, r.weight.value / (r.heightCm / 100).let { it * it }, 0.15)) add("BMI ${fmt(r.bmi)} 与体重、身高对不上")
+        val fatFree = r.fatFreeMass
+        val fat = r.bodyFat?.value
+        if (fatFree != null && fat != null && !near(fatFree, weight - fat, 0.15)) {
+            add("去脂体重 ${fmt(fatFree)} kg 与体重减体脂对不上")
+        }
+        val control = r.weightControl
+        val target = r.targetWeight
+        if (control != null && target != null && !near(control, target - weight, 0.15)) {
+            add("体重控制 ${fmt(control)} kg 与目标体重对不上")
+        }
+        val fatControl = r.fatControl
+        val muscleControl = r.muscleControl
+        if (control != null && fatControl != null && muscleControl != null && !near(fatControl + muscleControl, control, 0.15)) {
+            add("脂肪控制与肌肉控制之和不等于体重控制")
+        }
+        val bmi = r.bmi
+        val height = r.heightCm
+        if (bmi != null && height != null && !near(bmi, weight / (height / 100).let { it * it }, 0.15)) {
+            add("BMI ${fmt(bmi)} 与体重、身高对不上")
+        }
         bounded("体脂率", r.bodyFatPct, 0.0, 100.0)
         bounded("皮下脂肪", r.subcutaneousFatPct, 0.0, 100.0)
         bounded("基础代谢率", r.bmr, 300.0, 10000.0)
@@ -389,27 +450,31 @@ object ReportChecks {
 
 internal fun fmt(v: Double): String = if (v == Math.floor(v) && abs(v) < 1e9) v.toLong().toString() else v.toString()
 
-/** 按服务端 `reports[]` 的 schema 序列化（src/ingest.ts 的 REPORT_SCHEMA）。只有数字，不带任何文字。 */
+/**
+ * 按服务端 `reports[]` 的 schema 序列化（src/ingest.ts 的 REPORT_SCHEMA）。只有数字，不带任何文字。
+ * 没认出的指标整个键都不发：schema 里除了时间和体重都是可选，服务端也只补 `typeof value === 'number'` 的那些。
+ */
 fun BodyReport.toIngestJson(measuredMinuteMs: Long): String {
     fun m(x: Measured) = mapOf("value" to x.value, "min" to x.min, "max" to x.max)
     fun seg(s: Segments<SegmentValue>) = s.toList().associate { (k, v) -> k to mapOf("kg" to v.kg, "pct" to v.pct) }
-    val body = linkedMapOf<String, Any>(
-        "measured_minute_ms" to measuredMinuteMs,
-        "height_cm" to heightCm, "age" to age, "body_score" to bodyScore,
-        "weight_kg" to m(weight), "body_fat_kg" to m(bodyFat), "bone_mass_kg" to m(boneMass),
-        "protein_kg" to m(protein), "body_water_kg" to m(bodyWater), "muscle_kg" to m(muscle),
-        "skeletal_muscle_kg" to m(skeletalMuscle),
-        "body_fat_pct" to bodyFatPct, "bone_mass_pct" to boneMassPct, "protein_pct" to proteinPct,
-        "body_water_pct" to bodyWaterPct, "muscle_pct" to musclePct, "skeletal_muscle_pct" to skeletalMusclePct,
-        "bmi" to bmi, "obesity_degree_pct" to obesityDegreePct,
-        "target_weight_kg" to targetWeight, "weight_control_kg" to weightControl,
-        "fat_control_kg" to fatControl, "muscle_control_kg" to muscleControl,
-        "visceral_fat_level" to visceralFat, "bmr_kcal" to bmr, "fat_free_mass_kg" to fatFreeMass,
-        "subcutaneous_fat_pct" to subcutaneousFatPct, "smi" to smi, "body_age" to bodyAge, "whr" to whr,
-    )
-    segmentFat?.let { body["segment_fat"] = seg(it) }
-    segmentMuscle?.let { body["segment_muscle"] = seg(it) }
-    impedance?.let { imp -> body["impedance_ohm"] = imp.entries.associate { (k, s) -> "khz_$k" to s.toList().toMap() } }
+    val body = linkedMapOf<String, Any>("measured_minute_ms" to measuredMinuteMs)
+    fun put(key: String, value: Any?) {
+        if (value != null) body[key] = value
+    }
+    put("height_cm", heightCm); put("age", age); put("body_score", bodyScore)
+    put("weight_kg", m(weight)); put("body_fat_kg", bodyFat?.let(::m)); put("bone_mass_kg", boneMass?.let(::m))
+    put("protein_kg", protein?.let(::m)); put("body_water_kg", bodyWater?.let(::m)); put("muscle_kg", muscle?.let(::m))
+    put("skeletal_muscle_kg", skeletalMuscle?.let(::m))
+    put("body_fat_pct", bodyFatPct); put("bone_mass_pct", boneMassPct); put("protein_pct", proteinPct)
+    put("body_water_pct", bodyWaterPct); put("muscle_pct", musclePct); put("skeletal_muscle_pct", skeletalMusclePct)
+    put("bmi", bmi); put("obesity_degree_pct", obesityDegreePct)
+    put("target_weight_kg", targetWeight); put("weight_control_kg", weightControl)
+    put("fat_control_kg", fatControl); put("muscle_control_kg", muscleControl)
+    put("visceral_fat_level", visceralFat); put("bmr_kcal", bmr); put("fat_free_mass_kg", fatFreeMass)
+    put("subcutaneous_fat_pct", subcutaneousFatPct); put("smi", smi); put("body_age", bodyAge); put("whr", whr)
+    put("segment_fat", segmentFat?.let(::seg))
+    put("segment_muscle", segmentMuscle?.let(::seg))
+    put("impedance_ohm", impedance?.entries?.associate { (k, s) -> "khz_$k" to s.toList().toMap() })
     return json(body)
 }
 

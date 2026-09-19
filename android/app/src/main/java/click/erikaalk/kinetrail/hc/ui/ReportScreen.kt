@@ -33,8 +33,9 @@ import click.erikaalk.kinetrail.hc.report.fmt
 import java.time.format.DateTimeFormatter
 
 /**
- * 识图结果核对页：摘要 → 各分区读数 → 上传。读不全或交叉校验不过时不给上传，只给重新选择。
- * 服务端对同一次称重的报告不可变，所以宁可拦下来，也不把读错的数写进去。
+ * 识图结果核对页：摘要 → 各分区读数 → 上传。
+ * 交叉校验不过（数字读错了）或者连时间、体重都没认出时不给上传，只给重新选择：服务端对同一次称重的报告不可变，
+ * 宁可拦下来也不把读错的数写进去。个别指标没认出不拦——列在页顶，上传的 JSON 里没有这几项，同时说清楚补不回来。
  */
 @Composable
 fun ReportScreen(state: AppState, actions: AppActions, insets: PageInsets) {
@@ -47,7 +48,7 @@ fun ReportScreen(state: AppState, actions: AppActions, insets: PageInsets) {
     ) {
         PageTitle(text = Screen.Report.title, onTitleBounds = insets.onTitleBounds)
         val parsed = (state.report as? ReportState.Parsed)?.result
-        if (parsed?.uploadable != true) Column(
+        if (parsed?.uploadable != true || parsed.missed.isNotEmpty()) Column(
             pad.padding(top = KtSpacing.pageTitleToSection),
             verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.group),
         ) {
@@ -63,9 +64,19 @@ fun ReportScreen(state: AppState, actions: AppActions, insets: PageInsets) {
                     InlineBanner(report.message, tone = BannerTone.Error)
                     SecondaryButton("重新选择图片", onClick = actions::pickReport)
                 }
-                is ReportState.Parsed -> if (!report.result.uploadable) {
-                    InlineBanner(report.result.problems.joinToString("\n"), tone = BannerTone.Warning)
-                    SecondaryButton("重新选择图片", onClick = actions::pickReport)
+                is ReportState.Parsed -> {
+                    val result = report.result
+                    if (!result.uploadable) {
+                        InlineBanner(result.problems.joinToString("\n"), tone = BannerTone.Warning)
+                        SecondaryButton("重新选择图片", onClick = actions::pickReport)
+                    } else if (result.missed.isNotEmpty()) {
+                        InlineBanner(
+                            "没认出：${result.missed.joinToString("、")}。\n" +
+                                "其余读数可以照常上传，缺的这几项报告挂上去之后补不回来；想要完整的就换一张更清楚的图。",
+                            tone = BannerTone.Warning,
+                        )
+                        SecondaryButton("重新选择图片", onClick = actions::pickReport)
+                    }
                 }
             }
         }
@@ -85,7 +96,11 @@ fun ReportScreen(state: AppState, actions: AppActions, insets: PageInsets) {
             if (!state.tokenSaved) InlineBanner("保存推送令牌后才能上传。", tone = BannerTone.Warning)
             if (parsed.uploadable && !(upload is UploadState.Done && upload.ok)) {
                 PrimaryButton(
-                    text = if (upload == UploadState.Uploading) "上传中…" else "上传到 Kinetrail",
+                    text = when {
+                        upload == UploadState.Uploading -> "上传中…"
+                        parsed.missed.isNotEmpty() -> "仍然上传（缺 ${parsed.missed.size} 项）"
+                        else -> "上传到 Kinetrail"
+                    },
                     enabled = state.tokenSaved && upload != UploadState.Uploading,
                     onClick = actions::uploadReport,
                 )
@@ -109,11 +124,12 @@ private fun Summary(r: BodyReport) {
             horizontalArrangement = Arrangement.spacedBy(KtSpacing.space6),
         ) {
             Metric("${"%.2f".format(r.weight.value)} kg", "体重")
-            Metric("${one(r.bodyFatPct)}%", "体脂率")
-            Metric(fmt(r.bodyScore), "身体得分")
+            Metric(r.bodyFatPct?.let { "${one(it)}%" } ?: MISSING, "体脂率")
+            Metric(r.bodyScore?.let { fmt(it) } ?: MISSING, "身体得分")
         }
-        Text(
-            "年龄 ${r.age} · 身高 ${fmt(r.heightCm)} cm",
+        val meta = listOfNotNull(r.age?.let { "年龄 $it" }, r.heightCm?.let { "身高 ${fmt(it)} cm" })
+        if (meta.isNotEmpty()) Text(
+            meta.joinToString(" · "),
             style = KtType.secondary,
             color = colors.text.secondary,
             modifier = Modifier.padding(top = KtSpacing.Gap.inline),
@@ -131,12 +147,12 @@ private fun Metric(value: String, label: String) {
 
 @Composable
 private fun ReportSections(r: BodyReport) {
-    fun mass(m: Measured, pct: Double?) = buildString {
+    fun mass(m: Measured?, pct: Double?): String? {
+        if (m == null) return null
         // 报告里只有体重是两位小数
-        append(if (pct == null) "${"%.2f".format(m.value)} kg" else "${one(m.value)} kg")
-        if (pct != null) append(" · ${one(pct)}%")
+        return if (pct == null) "${"%.2f".format(m.value)} kg" else "${one(m.value)} kg · ${one(pct)}%"
     }
-    fun range(m: Measured) = "标准 ${one(m.min)}–${one(m.max)} kg"
+    fun range(m: Measured?) = m?.let { "标准 ${one(it.min)}–${one(it.max)} kg" }
     val composition = listOf(
         Triple("体重", r.weight, null), Triple("体脂", r.bodyFat, r.bodyFatPct), Triple("骨重量", r.boneMass, r.boneMassPct),
         Triple("蛋白质", r.protein, r.proteinPct), Triple("身体水份", r.bodyWater, r.bodyWaterPct),
@@ -144,22 +160,25 @@ private fun ReportSections(r: BodyReport) {
     )
     SettingsSection(
         title = "身体成分",
-        rows = composition.map { (label, m, pct) -> { SettingRow(title = label, subtitle = range(m), value = mass(m, pct)) } },
+        rows = composition.map { (label, m, pct) ->
+            { SettingRow(title = label, subtitle = range(m), value = mass(m, pct) ?: MISSING) }
+        },
     )
     Values(
         "体重控制",
         listOf(
-            "目标体重" to "${one(r.targetWeight)} kg", "体重控制" to "${one(r.weightControl)} kg",
-            "脂肪控制" to "${one(r.fatControl)} kg", "肌肉控制" to "${one(r.muscleControl)} kg",
+            "目标体重" to r.targetWeight?.let { "${one(it)} kg" }, "体重控制" to r.weightControl?.let { "${one(it)} kg" },
+            "脂肪控制" to r.fatControl?.let { "${one(it)} kg" }, "肌肉控制" to r.muscleControl?.let { "${one(it)} kg" },
         ),
     )
     Values(
         "其他指标",
         listOf(
-            "BMI" to one(r.bmi), "肥胖度" to "${fmt(r.obesityDegreePct)}%", "内脏脂肪等级" to fmt(r.visceralFat),
-            "基础代谢率" to "${fmt(r.bmr)} 千卡", "去脂体重" to "${one(r.fatFreeMass)} kg",
-            "皮下脂肪" to "${one(r.subcutaneousFatPct)}%", "SMI" to "${one(r.smi)} kg/m²",
-            "身体年龄" to fmt(r.bodyAge), "腰臀比" to one(r.whr),
+            "BMI" to r.bmi?.let { one(it) }, "肥胖度" to r.obesityDegreePct?.let { "${fmt(it)}%" },
+            "内脏脂肪等级" to r.visceralFat?.let { fmt(it) },
+            "基础代谢率" to r.bmr?.let { "${fmt(it)} 千卡" }, "去脂体重" to r.fatFreeMass?.let { "${one(it)} kg" },
+            "皮下脂肪" to r.subcutaneousFatPct?.let { "${one(it)}%" }, "SMI" to r.smi?.let { "${one(it)} kg/m²" },
+            "身体年龄" to r.bodyAge?.let { fmt(it) }, "腰臀比" to r.whr?.let { one(it) },
         ),
     )
     r.segmentFat?.let { Segment("分段脂肪", it) }
@@ -178,6 +197,9 @@ private fun ReportSections(r: BodyReport) {
 /** 报告里质量、比例、阻抗都显示一位小数（2.0 kg、338.0 Ω），核对时照原样显示。 */
 private fun one(v: Double) = "%.1f".format(v)
 
+/** 这一项没认出来：行照常留着，值写清楚，免得以为是报告上没有。 */
+private const val MISSING = "未识别"
+
 private val SEGMENT_LABELS = listOf("left_arm" to "左臂", "right_arm" to "右臂", "trunk" to "躯干", "left_leg" to "左腿", "right_leg" to "右腿")
 
 @Composable
@@ -187,6 +209,6 @@ private fun Segment(title: String, s: Segments<SegmentValue>) {
 }
 
 @Composable
-private fun Values(title: String, rows: List<Pair<String, String>>) {
-    SettingsSection(title = title, rows = rows.map { (label, value) -> { SettingRow(title = label, value = value) } })
+private fun Values(title: String, rows: List<Pair<String, String?>>) {
+    SettingsSection(title = title, rows = rows.map { (label, value) -> { SettingRow(title = label, value = value ?: MISSING) } })
 }

@@ -101,6 +101,7 @@ class ReportParserTest {
 
     private fun assertReal(result: ParseResult) {
         assertEquals(emptyList(), result.problems)
+        assertEquals(emptyList(), result.missed)
         val r = assertNotNull(result.report)
         assertEquals(LocalDateTime.of(2026, 9, 15, 20, 43), r.measuredAt)
         assertEquals(30, r.age)
@@ -113,8 +114,8 @@ class ReportParserTest {
         assertEquals(45.2, r.skeletalMusclePct)
         assertEquals(23.6, r.bmi)
         assertEquals(106.0, r.obesityDegreePct)
-        assertEquals(listOf(68.2, -4.2, -4.2, 0.0), listOf(r.targetWeight, r.weightControl, r.fatControl, r.muscleControl))
-        assertEquals(listOf(5.0, 1612.0, 58.3, 14.2, 8.9, 29.0, 0.9), listOf(r.visceralFat, r.bmr, r.fatFreeMass, r.subcutaneousFatPct, r.smi, r.bodyAge, r.whr))
+        assertEquals(listOf<Double?>(68.2, -4.2, -4.2, 0.0), listOf(r.targetWeight, r.weightControl, r.fatControl, r.muscleControl))
+        assertEquals(listOf<Double?>(5.0, 1612.0, 58.3, 14.2, 8.9, 29.0, 0.9), listOf(r.visceralFat, r.bmr, r.fatFreeMass, r.subcutaneousFatPct, r.smi, r.bodyAge, r.whr))
         assertEquals(SegmentValue(0.8, 108.4), r.segmentFat?.leftArm)
         assertEquals(SegmentValue(0.7, 99.1), r.segmentFat?.rightArm)
         assertEquals(SegmentValue(7.0, 151.3), r.segmentFat?.trunk)
@@ -167,6 +168,7 @@ class ReportParserTest {
         assertEquals(245, lines.size)
         val result = ReportParser.parse(lines, width)
         assertEquals(emptyList(), result.problems)
+        assertEquals(emptyList(), result.missed)
         val r = assertNotNull(result.report)
         assertEquals(LocalDateTime.of(2026, 9, 16, 9, 13), r.measuredAt)
         assertEquals(30, r.age)
@@ -180,11 +182,11 @@ class ReportParserTest {
         assertEquals(Measured(42.4, 35.9, 44.6), r.bodyWater)
         assertEquals(Measured(54.1, 45.8, 57.0), r.muscle)
         assertEquals(Measured(32.5, 28.5, 34.9), r.skeletalMuscle)
-        assertEquals(listOf(5.4, 16.3, 59.0, 75.3, 45.2), listOf(r.boneMassPct, r.proteinPct, r.bodyWaterPct, r.musclePct, r.skeletalMusclePct))
+        assertEquals(listOf<Double?>(5.4, 16.3, 59.0, 75.3, 45.2), listOf(r.boneMassPct, r.proteinPct, r.bodyWaterPct, r.musclePct, r.skeletalMusclePct))
         assertEquals(23.5, r.bmi)
         assertEquals(106.0, r.obesityDegreePct)
-        assertEquals(listOf(68.0, -3.9, -3.9, 0.0), listOf(r.targetWeight, r.weightControl, r.fatControl, r.muscleControl))
-        assertEquals(listOf(5.0, 1605.0, 58.1, 14.0, 8.8, 28.0, 0.9), listOf(r.visceralFat, r.bmr, r.fatFreeMass, r.subcutaneousFatPct, r.smi, r.bodyAge, r.whr))
+        assertEquals(listOf<Double?>(68.0, -3.9, -3.9, 0.0), listOf(r.targetWeight, r.weightControl, r.fatControl, r.muscleControl))
+        assertEquals(listOf<Double?>(5.0, 1605.0, 58.1, 14.0, 8.8, 28.0, 0.9), listOf(r.visceralFat, r.bmr, r.fatFreeMass, r.subcutaneousFatPct, r.smi, r.bodyAge, r.whr))
         assertEquals(SegmentValue(0.8, 106.9), r.segmentFat?.leftArm)
         assertEquals(SegmentValue(0.7, 98.3), r.segmentFat?.rightArm)
         // 报告上是 149.3%，OCR 丢了小数点读成「1493%」
@@ -210,7 +212,7 @@ class ReportParserTest {
         // 报告里的质量固定一位小数，「141」只可能是 14.1，还原后交叉校验照常通过
         val result = ReportParser.parse(fixture(fatValue = "141 (8.0-16.2)"), 1410f)
         assertEquals(emptyList(), result.problems)
-        assertEquals(14.1, assertNotNull(result.report).bodyFat.value)
+        assertEquals(14.1, assertNotNull(result.report).bodyFat?.value)
     }
 
     @Test
@@ -223,14 +225,60 @@ class ReportParserTest {
     }
 
     @Test
-    fun `阻抗少一格或大小关系反了都拦下`() {
-        val short = ReportParser.parse(fixture().filterNot { it.text == "20.6" }, 1410f)
-        assertNull(short.report)
-        assertTrue(short.problems.contains("没认出20kHz 阻抗的五个部位"), short.problems.toString())
+    fun `小数点读成逗号也当小数点`() {
+        // 真机实测：骨骼肌率的「45.9」读成「45,9」。不换回小数点就只截到「45」，再按丢小数点还原会差十倍
+        val result = ReportParser.parse(fixture(fatValue = "14,1 (8.0-16.2)"), 1410f)
+        assertEquals(emptyList(), result.problems)
+        assertEquals(14.1, assertNotNull(result.report).bodyFat?.value)
+    }
 
+    @Test
+    fun `阻抗少一格只丢阻抗，读错了才拦下`() {
+        // 读不全：这一块不传，其余读数照常上传
+        val short = ReportParser.parse(fixture().filterNot { it.text == "20.6" }, 1410f)
+        assertEquals(emptyList(), short.problems)
+        assertTrue(short.missed.any { it.startsWith("20kHz") }, short.missed.toString())
+        val report = assertNotNull(short.report)
+        assertNull(report.impedance)
+        assertTrue(short.uploadable)
+        assertFalse("impedance_ohm" in report.toIngestJson(1_789_476_180_000))
+
+        // 读错了（大小关系反了）：拦下，不许上传
         val swapped = ReportParser.parse(fixture(impedance20 = listOf("216.3", "327.9", "20.6", "243.1", "262.7")), 1410f)
         assertFalse(swapped.uploadable)
         assertTrue(swapped.problems.any { it.contains("right_arm") }, swapped.problems.toString())
+    }
+
+    @Test
+    fun `繁体和多认一个字叠加的标签照样对上`() {
+        // 2026-09-19 真机实测：「内脏脂肪等级」读成「內脏脂肪等級」、「身体年龄」读成「身体休年齡」，一行错两处
+        val misread = mapOf("内脏脂肪等级" to "內脏脂肪等級", "身体年龄" to "身体休年齡", "骨骼肌率" to "骨骼肌奉")
+        val lines = fixture().map { misread[it.text]?.let { t -> OcrLine(t, it.left, it.top, it.right, it.bottom) } ?: it }
+        val result = ReportParser.parse(lines, 1410f)
+        assertEquals(emptyList(), result.missed)
+        val r = assertNotNull(result.report)
+        assertEquals(5.0, r.visceralFat)
+        assertEquals(29.0, r.bodyAge)
+        assertEquals(45.2, r.skeletalMusclePct)
+        assertTrue(result.uploadable)
+    }
+
+    @Test
+    fun `个别指标没认出不拦上传，只是不发这一项`() {
+        val result = ReportParser.parse(fixture().filterNot { it.text == "身体年龄" }, 1410f)
+        assertEquals(emptyList(), result.problems)
+        assertEquals(listOf("身体年龄"), result.missed)
+        assertTrue(result.uploadable)
+        val json = assertNotNull(result.report).toIngestJson(1_789_476_180_000)
+        assertFalse("body_age" in json, json)
+        assertTrue("\"whr\":0.9" in json, json)
+    }
+
+    @Test
+    fun `体重没认出就整张拦下`() {
+        val result = ReportParser.parse(fixture().filterNot { it.text == "体重" }, 1410f)
+        assertNull(result.report)
+        assertEquals(listOf("没认出体重"), result.problems)
     }
 
     @Test

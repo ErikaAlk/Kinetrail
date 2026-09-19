@@ -20,3 +20,6 @@ wrangler.local.jsonc
 
 # Python
 __pycache__/
+
+# 真机导出的识别结果，含真实体测读数
+last-ocr.json
