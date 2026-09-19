@@ -17,7 +17,7 @@
 - 未分类的自由字符串 fail-closed（整条不发布、批次 partial），不能为了“同步成功”放宽。
 - 查询只读已发布快照（`queries.ts` 的 `VISIBLE`），读工具不触发同步；训练写工具 `readOnlyHint=false`。`refresh_data` 已下线（体测改由手机推送），不要为“数据新鲜”加回服务端拉取。
 - Health Connect 推送（`src/ingest.ts`）：令牌只存 SHA-256；只写 `hc:` 前缀、`HC_PROFILE_REF` 的 weight 记录，碰不到 FitDays 来源；已存 `hc_id` 的值不可变，删除只写 tombstone 新版本；读取、合并、发布都在 `sync_lease` 内。推送批次被调度回收时不得重排成 FitDays 拉取任务（会登录 FitDays+ 顶掉手机）。FitDays+ 只把主用户写进 HC，FitDays+ 升级后重跑 G-HC3。
-- 识图报告（`reports[]`）：手机本机 OCR，请求里只有数字；只挂到同一分钟、体重相同、恰好一组的已入库 HC 称重上，挂上后不可变；只补 HC 没有的指标，不覆盖 HC 值。不要为了“能挂上”放宽匹配（按时间就近、忽略体重），也不要把图片传到服务端识别。解析与交叉校验在 `android/.../report/ReportParser.kt`，请求 JSON 与服务端测试共用 `tests/fixtures/android-report.json`。
+- 识图报告（`reports[]`）：手机本机 OCR，请求里只有数字；只挂到同一分钟、体重相同、恰好一组的已入库 HC 称重上，挂上后不可变；只补 HC 没有的指标，不覆盖 HC 值。不要为了“能挂上”放宽匹配（按时间就近、忽略体重），也不要把图片传到服务端识别。手机端必需的只有检测时间和体重，其余指标没认出就整项不发（schema 里都是可选，服务端只补 `typeof value === 'number'` 的），不要退回“缺一项整张作废”；交叉校验不过是数字读错，仍然拦下。解析与交叉校验在 `android/.../report/ReportParser.kt`，请求 JSON 与服务端测试共用 `tests/fixtures/android-report.json`。
 - 训练写入：先查收据，再校验，再单个 D1 batch 提交（guard 表 CAS）；约束失败为 not_committed，其他批量错误且查不到收据为 unknown。V1 没有 hard delete，事实表由触发器兜底。
 - 手机日历（`src/calendar.ts`）：只读，复用推送令牌（用户 2026-09-16 批准的扩权），只读 `VISIBLE` 快照与当前生效的动作版本，不触发同步；输出不含 `raw_text`，发出前过 `findSecretPath`。响应形状由 `tests/fixtures/calendar-response.json` 钉住，服务端与 Android 单测共用，改字段要同时改两边。手表消耗热量走 `finalize_workout_session` 的 `calories_kcal`，不走 Health Connect。
 - 只存本人：`PROFILE_ALLOWLIST` 限定入库的 FitDays 成员（当前只有本人），其他成员和无 suid 的记录在消毒前丢弃。不要为“数据更全”清空它；换人时写 profile_ref，不写原始 suid。事实表唯一的物理删除是用户授权的 `scripts/purge-non-owner-profiles.sql`，已于 2026-09-15 执行。
@@ -37,7 +37,7 @@
 - MCP Inspector 在 Windows 的 Node 24 下退出时会崩溃，互通检查固定用 Node 22.23.2。
 - Write 工具会把字符串里的 `\u0000` 写成真实 NUL 字节，源码里需要分隔符时用可见字符或确认文件内容。Bash heredoc 会把 `'\n'` 这类转义吃掉，写含反斜杠的代码或文档用 Write/Edit 工具。
 - `android/` 的 Gradle 在 Claude Code 进程树里直接跑会报 loopback 连接失败，按 `android/README.md` 用 WMI 拉出进程树并隐藏窗口。
-- ML Kit 在报告的衬线字体上会读错形近字（体→休、控→挖、肉→內、龄→齡、抗→坑）、多认一个字（「肌肉均衡」→「肌肉內均衝」）、读错符号（`|`、`%`→`96`、`/1`→`1`、`0`→`o`），还会丢小数点（「157.7%」→「1577%」）。标签比较容忍编辑距离 1，数字按报告固定小数位还原（`ICERUnitConfig.o()` 保证质量/比例/阻抗一位小数、表里体重两位）。改解析前先看两份真实读法：`mlkit-replica-ocr.json`（模拟器 + 近似图）与 `mlkit-real-report-ocr.json`（真机 + FitDays+ 原图）。
+- ML Kit 在报告的衬线字体上会读错形近字（体→休、控→挖、肉→內、龄→齡、级→級、成→咸、率→奉/牽、抗→坑）、多认一个字（「肌肉均衡」→「肌肉內均衝」）、读错符号（`|`、`%`→`96`、`/1`→`1`、`0`→`o`），还会丢小数点（「157.7%」→「1577%」）或把小数点读成逗号（「45.9」→「45,9」，2026-09-18 真机实测）。同一份报告每天错的地方都不一样，两处叠加（「內脏脂肪等級」「身体休年齡」，2026-09-19 实测）就超出一处容错，所以形近字按组归一（`ReportParser.kt` 的 `CONFUSABLE`）再比编辑距离，别再逐次往表里补一个误读。容错阈值只能是 1：「分段脂肪分析」与「肌肉脂肪分析」只差两个字。数字之间的逗号在 `normalize` 换回小数点（否则只截到前半段，再按丢小数点还原会差十倍），数字按报告固定小数位还原（`ICERUnitConfig.o()` 保证质量/比例/阻抗一位小数、表里体重两位）。改解析前先看两份真实读法：`mlkit-replica-ocr.json`（模拟器 + 近似图）与 `mlkit-real-report-ocr.json`（真机 + FitDays+ 原图）。
 - 用 `adb shell am start -a android.intent.action.SEND --eu android.intent.extra.STREAM content://media/...` 模拟分享会因 shell 没有媒体授权报 SecurityException，验证识图改走 App 里的相册选图。Git Bash 里的 adb 路径参数要加 `MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 会被改写成 Windows 路径。
 - Kotlin KDoc 里写 `values*/` 这类含 `*/` 的路径会提前结束注释，编译报一串 “Expecting a top level declaration”。
 - 手机插在 VID 2109 的 USB 集线器上时，Windows 能枚举 ADB 接口，但 adb 读序列号报错 31、`adb devices` 为空；直插笔记本 USB 口。ColorOS 上 `adb install` 要在手机上点确认，命令超时不代表失败。
