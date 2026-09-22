@@ -21,10 +21,13 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import hashlib
+import http.client
 import json
 import logging
 import os
+import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -116,23 +119,68 @@ def remember(seen: list[str], digest: str) -> list[str]:
 
 
 class Queue:
-    """待发项存一个 JSON 文件。"""
+    """待发项存一个 JSON 文件。推送在线程里跑，和主循环的 add 用同一把锁，不会同时写文件。"""
 
     def __init__(self, path: Path):
         self.path = path
         self.items: list[dict] = load_json(path, [])
+        self.lock = threading.Lock()
 
     def save(self) -> None:
         save_json(self.path, self.items)
 
     def add(self, item: dict) -> None:
-        self.items.append(item)
-        self.save()
+        with self.lock:
+            self.items.append(item)
+            self.save()
+
+    def head(self, count: int) -> list[dict]:
+        with self.lock:
+            return self.items[:count]
 
     def drop_first(self, count: int) -> None:
         # 按位置删刚发出去的那一批：不同称重可能同一毫秒（时钟回拨），按时间删会连没发的一起删掉
-        self.items = self.items[count:]
-        self.save()
+        with self.lock:
+            self.items = self.items[count:]
+            self.save()
+
+
+def ipv4_first(infos: list) -> list:
+    return sorted(infos, key=lambda info: info[0] != socket.AF_INET)
+
+
+def connect_ipv4_first(address, timeout=None, source_address=None, *_args):
+    """宿舍网络发了 IPv6 路由却不通。socket.create_connection 按解析顺序逐个试、每个地址等满超时，
+    先撞上两个 IPv6 地址，推送就晚一分钟。先试 IPv4，全失败再试 IPv6。"""
+    host, port = address
+    error: OSError = OSError(f"no address for {host}")
+    for family, kind, proto, _, addr in ipv4_first(socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)):
+        sock = socket.socket(family, kind, proto)
+        try:
+            if isinstance(timeout, (int, float)):
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(addr)
+            return sock
+        except OSError as e:
+            error = e
+            sock.close()
+    raise error
+
+
+class _HTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = connect_ipv4_first
+
+
+class _HTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_HTTPSConnection, req, context=self._context)
+
+
+OPENER = urllib.request.build_opener(_HTTPSHandler())
 
 
 def post(origin: str, token: str, items: list[dict]) -> tuple[int, dict]:
@@ -143,7 +191,7 @@ def post(origin: str, token: str, items: list[dict]) -> tuple[int, dict]:
                  "user-agent": "KinetrailGateway/1"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with OPENER.open(req, timeout=15) as resp:
             return resp.status, json.loads(resp.read() or b"{}")
     except urllib.error.HTTPError as e:
         try:
@@ -155,8 +203,7 @@ def post(origin: str, token: str, items: list[dict]) -> tuple[int, dict]:
 def flush(queue: Queue, origin: str, token: str) -> None:
     """推送队列。200 时每一项都有了结果（写入、未变或拒绝），全部移出；
     400 是请求本身不对，重试也不会好，丢掉这批并记一行；其余（网络、401、429、5xx）留着下次再推。"""
-    while queue.items:
-        batch = queue.items[:MAX_PER_REQUEST]
+    while batch := queue.head(MAX_PER_REQUEST):
         try:
             status, result = post(origin, token, batch)
         except (urllib.error.URLError, OSError, ValueError) as e:
@@ -208,6 +255,21 @@ async def read_result(device, known: set[str]) -> bytes | None:
                 log.info("other frames: %s", seen)
 
 
+async def pusher(queue: Queue, origin: str, token: str, wake: asyncio.Event) -> None:
+    """推送单独在线程里跑：断网时一次推送要卡上几十秒，不能挡住蓝牙扫描（那段时间有人上秤就收不到了）。
+    有新称重立刻推；推不出去的每分钟重试一次。"""
+    while True:
+        wake.clear()
+        try:
+            await asyncio.to_thread(flush, queue, origin, token)
+        except Exception as e:  # 服务端回了意料之外的东西：记一行，下一轮再试，推送线程不能死
+            log.warning("push crashed: %s, %d pending", type(e).__name__, len(queue.items))
+        try:
+            await asyncio.wait_for(wake.wait(), 60)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def run() -> None:
     from bleak import BleakScanner
 
@@ -221,9 +283,12 @@ async def run() -> None:
     seen_path = queue.path.with_name("seen.json")
     seen: list[str] = load_json(seen_path, [])
     log.info("started, %d pending", len(queue.items))
+    wake = asyncio.Event()
+    push_task = asyncio.create_task(pusher(queue, origin, token, wake))
 
     while True:
-        flush(queue, origin, token)
+        if push_task.done():  # pusher 自己兜住了所有异常，走到这里说明出了想不到的事：退出让 systemd 重启
+            raise RuntimeError("pusher stopped")
         device = await BleakScanner.find_device_by_address(mac, timeout=60.0)
         if device is None:
             continue
@@ -244,6 +309,7 @@ async def run() -> None:
             log.warning("unreadable result frame (%d bytes)", len(payload))
             continue
         queue.add(item)
+        wake.set()
         log.info("measured, %d pending", len(queue.items))
         # 秤出结果后还会亮一阵、继续广播；歇一会儿再扫，免得反复连它（BlueZ 在设备停播约 30 秒后才从缓存里清掉）
         await asyncio.sleep(60)
@@ -272,6 +338,10 @@ def _self_check() -> None:
         assert len(Queue(Path(d) / "q.json").items) == 2
         q.drop_first(1)
         assert [i["a7_hex"] for i in Queue(Path(d) / "q.json").items] == [bare.hex()]
+    # 连接先试 IPv4，同一族内保持解析顺序
+    infos = [(socket.AF_INET6, 0, 0, "", "a"), (socket.AF_INET, 0, 0, "", "b"),
+             (socket.AF_INET6, 0, 0, "", "c"), (socket.AF_INET, 0, 0, "", "d")]
+    assert [i[4] for i in ipv4_first(infos)] == ["b", "d", "a", "c"]
     # 收过的帧只按数量淘汰；重复的挪到最新，不占两格
     many = [f"{i:02x}" for i in range(SEEN_LIMIT)]
     kept = remember(many, "new")

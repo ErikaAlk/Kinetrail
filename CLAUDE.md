@@ -43,6 +43,7 @@
 - 用 `adb shell am start -a android.intent.action.SEND --eu android.intent.extra.STREAM content://media/...` 模拟分享会因 shell 没有媒体授权报 SecurityException，验证识图改走 App 里的相册选图。Git Bash 里的 adb 路径参数要加 `MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 会被改写成 Windows 路径。
 - Kotlin KDoc 里写 `values*/` 这类含 `*/` 的路径会提前结束注释，编译报一串 “Expecting a top level declaration”。
 - T6 的 USB 蓝牙适配器是 RTL8761BU，`armbian-firmware` 里没有它的固件，而 Debian 的 `firmware-realtek` 与 `armbian-firmware` 互相冲突，直接 `apt install` 会卸掉整包 Armbian 固件。只从 Debian 包里取两个 `rtl8761bu_*.bin`（`gateway/README.md` 第 1 步）。用户住宿舍，身边只有 T6；香橙派在家里，连不到是正常的。
+- 宿舍网络给 T6 发了 IPv6 默认路由，但 IPv6 实际不通（`curl -6` 超时、`curl -4` 秒回）。curl 会自动退回 IPv4，Python urllib 不会：它按解析顺序逐个地址等满超时，网关推送因此晚过一分钟，现在网关自己先连 IPv4（`connect_ipv4_first`）。
 - T6 上的 systemd 服务别用 `DynamicUser`：Armbian 的 nsswitch 没有 `systemd` 模块，动态 uid 解析不了，连系统 D-Bus 会在握手时断开（dbus_fast `EOFError`）。网关用 `useradd` 建的 `kinetrail-gw`。
 - 从 PowerShell 给 ssh 写远端命令时，远端要用的单引号别写成 `''x''`：三层引号拆开后 `tr -d ''\r''` 变成了 `tr -d r`，把配置里的字母 r 全删了。远端命令用 PowerShell 单引号字符串包住、里面用双引号；写完核对哈希或内容。
 - 手机插在 VID 2109 的 USB 集线器上时，Windows 能枚举 ADB 接口，但 adb 读序列号报错 31、`adb devices` 为空；直插笔记本 USB 口。ColorOS 上 `adb install` 要在手机上点确认，命令超时不代表失败。
