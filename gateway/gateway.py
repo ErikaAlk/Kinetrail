@@ -11,7 +11,8 @@
   KT_HEIGHT_CM     身高（整数 cm）
   KT_BIRTH_DATE    出生日期 YYYY-MM-DD，按称重当天算整岁
   KT_SEX           1 男 / 0 女（WLA37 的编码）
-  KT_QUEUE         待发队列文件，默认 /var/lib/kinetrail-gateway/queue.json
+  KT_QUEUE         待发队列文件，默认 /var/lib/kinetrail-gateway/queue.json；
+                   同目录的 seen.json 记最近收过的 A7 的哈希（不存读数），重启后也不把秤重发的旧帧当新的
 
 python3 gateway.py --check 用合成帧自检，不需要蓝牙。
 """
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import logging
 import os
@@ -37,7 +39,9 @@ FFB2 = "0000ffb2-0000-1000-8000-00805f9b34fb"
 FFB3 = "0000ffb3-0000-1000-8000-00805f9b34fb"
 P3_ALGORITHM = 37          # A7 载荷 [5]：WLA 编号
 RESULT_TIMEOUT_S = 60      # 连上之后等 A7 的时长：站稳、测阻抗要十来秒
-REPEAT_WINDOW_S = 600      # 同一 A7 载荷（含秤自己的时间戳字节）10 分钟内只收一次
+# 收过的 A7 载荷只按数量淘汰、不按时间：帧里有秤自己的时间戳，新称重不会和旧帧相同；
+# 按时间淘汰的话，秤每次连接都重发的旧帧过期后会被当成新的，网关拿着它断开、漏掉真正的新结果。
+SEEN_LIMIT = 500
 MAX_PER_REQUEST = 50
 # 按北京时间算称重当天的整岁（中国不用夏令时，固定 +8 就够，不依赖系统时区和 tzdata）
 LOCAL_TZ = dt.timezone(dt.timedelta(hours=8))
@@ -87,21 +91,39 @@ def measurement(payload: bytes, time_ms: int, height: int, birth: dt.date, sex: 
     }
 
 
+def load_json(path: Path, default):
+    try:
+        return json.loads(path.read_text("utf-8"))
+    except FileNotFoundError:
+        return default
+
+
+def save_json(path: Path, data) -> None:
+    """先写临时文件再改名，写到一半断电也不会留下半份。"""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data), "utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+
+
+def fingerprint(payload: bytes) -> str:
+    """只存哈希：seen.json 会长期留着，别让它变成一份室友体重的记录。"""
+    return hashlib.sha256(payload).hexdigest()[:32]
+
+
+def remember(seen: list[str], digest: str) -> list[str]:
+    return [h for h in seen if h != digest][-(SEEN_LIMIT - 1):] + [digest]
+
+
 class Queue:
-    """待发项存一个 JSON 文件；先写临时文件再改名，写到一半断电也不会留下半份。"""
+    """待发项存一个 JSON 文件。"""
 
     def __init__(self, path: Path):
         self.path = path
-        try:
-            self.items: list[dict] = json.loads(path.read_text("utf-8"))
-        except FileNotFoundError:
-            self.items = []
+        self.items: list[dict] = load_json(path, [])
 
     def save(self) -> None:
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.items), "utf-8")
-        os.chmod(tmp, 0o600)
-        tmp.replace(self.path)
+        save_json(self.path, self.items)
 
     def add(self, item: dict) -> None:
         self.items.append(item)
@@ -166,7 +188,7 @@ async def read_result(device, known: set[str]) -> bytes | None:
         if payload is None:
             seen[f"bad/{len(data)}"] = seen.get(f"bad/{len(data)}", 0) + 1
         elif payload[0] == decode.TYPE_RESULT:
-            if payload.hex() in known:
+            if fingerprint(payload) in known:
                 seen["a7/repeat"] = seen.get("a7/repeat", 0) + 1
             elif not result.done():
                 result.set_result(payload)
@@ -196,7 +218,8 @@ async def run() -> None:
     birth = dt.date.fromisoformat(os.environ["KT_BIRTH_DATE"])
     sex = int(os.environ["KT_SEX"])
     queue = Queue(Path(os.environ.get("KT_QUEUE", "/var/lib/kinetrail-gateway/queue.json")))
-    recent: dict[str, float] = {}
+    seen_path = queue.path.with_name("seen.json")
+    seen: list[str] = load_json(seen_path, [])
     log.info("started, %d pending", len(queue.items))
 
     while True:
@@ -205,7 +228,7 @@ async def run() -> None:
         if device is None:
             continue
         try:
-            payload = await read_result(device, set(recent))
+            payload = await read_result(device, set(seen))
         except Exception as e:  # 秤走开、连接中断、BlueZ 报错：都等下一次上秤
             log.warning("read failed: %s", type(e).__name__)
             await asyncio.sleep(5)
@@ -214,8 +237,8 @@ async def run() -> None:
             log.info("connected but no result frame")
             continue
         now = time.time()
-        recent = {k: t for k, t in recent.items() if now - t < REPEAT_WINDOW_S}
-        recent[payload.hex()] = now
+        seen = remember(seen, fingerprint(payload))
+        save_json(seen_path, seen)
         item = measurement(payload, int(now * 1000), height, birth, sex)
         if item is None:
             log.warning("unreadable result frame (%d bytes)", len(payload))
@@ -249,6 +272,11 @@ def _self_check() -> None:
         assert len(Queue(Path(d) / "q.json").items) == 2
         q.drop_first(1)
         assert [i["a7_hex"] for i in Queue(Path(d) / "q.json").items] == [bare.hex()]
+    # 收过的帧只按数量淘汰；重复的挪到最新，不占两格
+    many = [f"{i:02x}" for i in range(SEEN_LIMIT)]
+    kept = remember(many, "new")
+    assert len(kept) == SEEN_LIMIT and kept[0] == "01" and kept[-1] == "new"
+    assert remember(["a", "b"], "a") == ["b", "a"]
     # 连接里先来一帧见过的旧结果、再来新结果：拿新的
     asyncio.run(_check_read_result(payload, bare))
     print("ok")
@@ -281,7 +309,7 @@ async def _check_read_result(old: bytes, new: bytes) -> None:
     real = sys.modules.get("bleak")
     sys.modules["bleak"] = types.SimpleNamespace(BleakClient=FakeClient)
     try:
-        assert await read_result(None, {old.hex()}) == new
+        assert await read_result(None, {fingerprint(old)}) == new
     finally:
         if real is None:
             del sys.modules["bleak"]

@@ -6,6 +6,7 @@
 - 时间用网关收到 A7 的时刻。秤的时钟不可信（实测差 15 小时），平时由 FitDays+ 校时。
 - 网关分不出上秤的是谁。服务端把与本人近 14 天体重中位数相差超过 `SCALE_WEIGHT_WINDOW_KG`（默认 4 kg）的称重整条丢掉；体重接近的室友会被当成本人记进去，在手机「记录」页那次称重的卡片底部删掉（物理删除）。
 - 推不出去的称重存在 `/var/lib/kinetrail-gateway/queue.json`，服务端给出结果（写入、未变或拒绝）才删；断网、服务端 5xx、令牌错误都会留着下次重推。这份文件里可能有室友的体重，只有服务用户能读。
+- 同目录的 `seen.json` 记最近 500 帧 A7 的哈希（不含读数）。秤可能在下次连接时重发旧结果，网关跳过见过的帧、接着等新的；服务端也按帧内容去重。
 - 日志只有计数和状态码，不写体重和阻抗：`journalctl -u kinetrail-gateway -f`。
 
 ## 部署
@@ -57,9 +58,9 @@
 | 日志 | 意思 |
 | --- | --- |
 | `connected but no result frame` | 连上了但 60 秒内没等到 A7：没站稳就下秤，或者手机上的 FitDays+ 先连走了 |
-| `other frames: {...}` | 秤推了 A2/A7 之外的帧（类型/长度），或者声明长度对不上（`bad/长度`，可能是分片）。协议没见过的情况，拿 `research/p3/probe.py` 抓原始帧看 |
+| `other frames: {...}` | 秤推了 A2/A7 之外的帧（类型/长度），或者声明长度对不上（`bad/长度`，可能是分片）。协议没见过的情况，拿 `research/p3/probe.py` 抓原始帧看。`a7/repeat` 是秤重发了收过的旧结果，已跳过 |
 | `rejected=['SCALE_WEIGHT_OUT_OF_WINDOW']` | 不是本人（或本人体重变化超出窗口）。本人确实变了很多时，临时调大 `SCALE_WEIGHT_WINDOW_KG` |
-| `rejected=['SCALE_NO_REFERENCE']` | 库里还没有本人的任何称重，窗口没有参考。先用 Health Connect 推一次 |
+| `rejected=['SCALE_NO_REFERENCE']` | 库里还没有本人的任何称重，窗口没有参考，网关的称重全部不收。新部署要先在 `SCALE_ACCEPT_AFTER` 之前经 Health Connect 推一次本人的称重 |
 | `push failed: HTTP 401` | 令牌不对；改好配置后 `systemctl restart kinetrail-gateway`，队列里的会重推 |
 | `push failed: HTTP 404` | 服务端没设 `SCALE_INGEST_TOKEN_SHA256`，或还没部署网关入口 |
 | `push failed: HTTP 503 not_configured` | `SCALE_ACCEPT_AFTER` 没设或格式不对 |
