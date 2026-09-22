@@ -24,7 +24,9 @@
 
 2. **依赖。** `sudo apt-get install --no-install-recommends python3-bleak`（Debian 13 是 0.22.3）。
 
-3. **程序。** 把 `gateway/gateway.py`、`research/p3/decode.py`、`research/p3/wla37.py` 放进 `/opt/kinetrail-gateway/`（同一目录），`kinetrail-gateway.service` 放进 `/etc/systemd/system/`。在那台机器上跑一次 `python3 /opt/kinetrail-gateway/gateway.py --check`，输出 `ok`。
+3. **程序。** 建服务用户 `sudo useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin kinetrail-gw`，把 `gateway/gateway.py`、`research/p3/decode.py`、`research/p3/wla37.py` 放进 `/opt/kinetrail-gateway/`（同一目录），`kinetrail-gateway.service` 放进 `/etc/systemd/system/`。在那台机器上跑一次 `python3 /opt/kinetrail-gateway/gateway.py --check`，输出 `ok`。
+
+   单元里不用 `DynamicUser`：Armbian 的 `/etc/nsswitch.conf` 没有 `systemd` 模块，动态 uid 解析不了，dbus-daemon 在握手时直接断开（日志是 dbus_fast 的 `EOFError`）。从 `DynamicUser` 改过来的机器，systemd 会把 `/var/lib/private/kinetrail-gateway` 挪回 `/var/lib/kinetrail-gateway`，但属主留成 `nobody`，要 `chown -R kinetrail-gw:kinetrail-gw` 一次，否则第一次称重写队列时报权限错误。
 
 4. **令牌。** 在自己的 PowerShell 7 里生成，令牌只在变量里：
 
