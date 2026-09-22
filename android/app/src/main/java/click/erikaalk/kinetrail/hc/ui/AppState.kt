@@ -74,6 +74,10 @@ class AppState {
     var calendarLoading by mutableStateOf(false)
     var calendarError by mutableStateOf<String?>(null)
     var calendarTruncated by mutableStateOf(false)
+
+    /** 正在删除的那次称重（服务端的 record_id）；同一时刻只删一条。 */
+    var deletingRecord by mutableStateOf<String?>(null)
+    var deleteError by mutableStateOf<String?>(null)
 }
 
 /** 界面发给 Activity 的动作。 */
@@ -81,6 +85,7 @@ interface AppActions {
     fun sync()
     fun showMonth(month: YearMonth)
     fun selectDate(date: LocalDate)
+    fun deleteMeasurement(recordId: String)
     fun requestPermissions()
     fun pickReport()
     fun uploadReport()

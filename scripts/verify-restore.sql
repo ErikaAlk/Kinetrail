@@ -10,7 +10,22 @@ SELECT
   (SELECT COUNT(*) FROM workout_events) AS workout_events,
   (SELECT COUNT(*) FROM workout_entry_versions) AS workout_entry_versions,
   (SELECT COUNT(*) FROM write_receipts) AS write_receipts,
-  (SELECT COUNT(*) FROM sync_batches) AS sync_batches;
+  (SELECT COUNT(*) FROM sync_batches) AS sync_batches,
+  (SELECT COUNT(*) FROM deleted_measurements) AS deleted_measurements;
+
+-- 应为 0：删除授权行只在删除的那个 batch 里存在，留下来说明删除中途出过问题
+SELECT 'purge_authorization_left' AS item, COUNT(*) AS n FROM purge_authorizations;
+
+-- 应为 0：版本或分块找不到所属记录（物理删除必须整条删干净）
+SELECT 'orphan_version' AS item, COUNT(*) AS n FROM raw_record_versions v
+WHERE NOT EXISTS (SELECT 1 FROM raw_records r WHERE r.id = v.raw_record_id);
+SELECT 'orphan_chunk' AS item, COUNT(*) AS n FROM raw_chunks c
+WHERE NOT EXISTS (SELECT 1 FROM raw_record_versions v WHERE v.id = c.version_id);
+
+-- 应为 2：两个禁止删除触发器都在，而且只放行 purge_authorizations 里的记录（0003 起）
+SELECT 'purge_guard_triggers' AS item, COUNT(*) AS n FROM sqlite_master
+WHERE type = 'trigger' AND name IN ('raw_records_no_delete', 'rrv_published_no_delete')
+  AND sql LIKE '%purge_authorizations%';
 
 -- 应为 0：分块数与 chunk_count 不一致的版本
 SELECT 'chunk_count_mismatch' AS item, COUNT(*) AS n FROM raw_record_versions v

@@ -1,4 +1,4 @@
-// Worker 入口：OAuth Provider 包住 /mcp；其余路由为授权页、健康检查、Health Connect 推送与手机日历读取；
+// Worker 入口：OAuth Provider 包住 /mcp；其余路由为授权页、健康检查、Health Connect 与体脂秤网关推送、手机日历读取与删除称重；
 // SyncScheduler alarm（及 cron）负责同步队列与定期刷新。
 
 import { DurableObject } from 'cloudflare:workers'
@@ -7,7 +7,9 @@ import { handleAuthRoutes, purgeAuthPending } from './auth'
 import { CALENDAR_PATH, handleCalendar } from './calendar'
 import { handleIngest, INGEST_PATH } from './ingest'
 import { buildRegistry, type Deps, handleMcpRequest, resourceMetadataUrl, resourceUrl } from './mcp'
+import { DELETE_PATH, handleDelete } from './purge'
 import { consumeRateLimit, purgeRateLimits } from './ratelimit'
+import { handleScale, SCALE_PATH } from './scale'
 import { scheduledSync } from './sync'
 import { TOOLS } from './tools'
 import { KtError, logEvent } from './util'
@@ -83,6 +85,8 @@ export function createWorker(deps: Deps) {
       if (url.pathname === '/healthz') return Response.json({ status: 'alive' })
       if (url.pathname === INGEST_PATH) return handleIngest(request, env, deps)
       if (url.pathname === CALENDAR_PATH) return handleCalendar(request, env, deps)
+      if (url.pathname === SCALE_PATH) return handleScale(request, env, deps)
+      if (url.pathname === DELETE_PATH) return handleDelete(request, env, deps)
       const auth = await handleAuthRoutes(request, env, deps)
       return auth ?? new Response('Not found', { status: 404 })
     },

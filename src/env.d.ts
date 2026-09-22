@@ -11,6 +11,8 @@ interface KinetrailSecrets {
   CURSOR_SIGNING_KEY?: string
   /** Health Connect 推送令牌的 SHA-256（小写十六进制）；未设置时推送入口返回 404。 */
   HC_INGEST_TOKEN_SHA256?: string
+  /** 体脂秤网关推送令牌的 SHA-256；未设置时网关入口返回 404。 */
+  SCALE_INGEST_TOKEN_SHA256?: string
   /** 仅测试环境：vitest 注入的迁移列表。 */
   TEST_MIGRATIONS: import('cloudflare:test').D1Migration[]
 }

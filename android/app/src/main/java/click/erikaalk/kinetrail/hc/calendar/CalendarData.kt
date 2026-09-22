@@ -37,7 +37,13 @@ data class TrainingSession(
     val entries: List<TrainingEntry>,
 )
 
-data class BodyMeasurement(val measuredAt: OffsetDateTime?, val metrics: Map<String, Double>)
+/** [recordId] 与 [deletable] 给手机上删除用：只有手机推送和体脂秤网关的称重能删，旧 FitDays 记录不能。 */
+data class BodyMeasurement(
+    val measuredAt: OffsetDateTime?,
+    val metrics: Map<String, Double>,
+    val recordId: String? = null,
+    val deletable: Boolean = false,
+)
 
 data class CalendarDay(
     val date: LocalDate,
@@ -101,7 +107,10 @@ fun parseCalendar(body: String): CalendarRange {
             },
             measurements = day.optJSONArray("measurements").map { m ->
                 val metrics = m.optJSONObject("metrics")
+                val recordId = m.stringOrNull("record_id")
                 BodyMeasurement(
+                    recordId = recordId,
+                    deletable = recordId != null && m.optBoolean("deletable"),
                     measuredAt = time(m.stringOrNull("measured_at")),
                     metrics = metrics?.keys()?.asSequence()
                         ?.mapNotNull { key -> metrics.doubleOrNull(key)?.let { key to it } }

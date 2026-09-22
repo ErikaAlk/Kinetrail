@@ -45,6 +45,10 @@
     // FitDays+ 只把主用户写进 HC（research/HEALTHCONNECT.md G-HC3）；推送的测量归到本人 profile，已有旧数据时用同一个，趋势不断档。
     "HC_PROFILE_REF": "p_0000000000000000",
     // 本人身高（cm）。FitDays+ 不往 HC 写 BMI，推送入库时按它推算；改身高只影响之后新产生的版本。
-    "HC_HEIGHT_CM": "170"
+    "HC_HEIGHT_CM": "170",
+    // 体脂秤网关接手的时刻：之后的称重只收网关（/ingest/scale），Health Connect 只收这之前的。空 = 网关入口未启用。
+    "SCALE_ACCEPT_AFTER": "",
+    // 网关分不出上秤的是谁：与本人近 14 天体重中位数相差超过这么多 kg 的称重整条不收（室友体重相近时仍会漏进来，在手机上删）。
+    "SCALE_WEIGHT_WINDOW_KG": "4"
   }
 }

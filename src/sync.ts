@@ -296,8 +296,12 @@ export async function scheduledSync(env: Env, deps: Deps, options: RunOptions = 
     }>()
   for (const row of expired.results) {
     await failBatch(db, row.owner_id, row.id, row.generation, 'INCOMPLETE_SYNC', now)
-    // Health Connect 推送由设备重发，不能在这里重排成 FitDays 拉取任务（那会登录 FitDays+ 并顶掉手机）。
-    if (row.source_region !== 'health_connect' && row.attempts < SYNC_POLICY.maxAttempts) {
+    // 手机与网关的推送由设备重发，不能在这里重排成 FitDays 拉取任务（那会登录 FitDays+ 并顶掉手机）。
+    if (
+      row.source_region !== 'health_connect' &&
+      row.source_region !== 'ble' &&
+      row.attempts < SYNC_POLICY.maxAttempts
+    ) {
       // 重试用新的 batch_id：被截断的旧尝试即使还在跑，也无法发布或清理新尝试的暂存。
       await db
         .prepare(

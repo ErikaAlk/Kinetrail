@@ -597,7 +597,14 @@ export async function stageBatch(
     )
   }
   // 暂存可以分多个 batch：未发布版本对查询不可见，失败后由清理逻辑移除。
-  for (let i = 0; i < statements.length; i += 50) await db.batch(statements.slice(i, i + 50))
+  // 每个 batch 都先验 lease：lease 过期被别人（例如物理删除）接管后，旧尝试连身份行也写不进去。
+  const fence = db
+    .prepare(
+      `INSERT INTO guard (ok) SELECT NULL WHERE NOT EXISTS
+       (SELECT 1 FROM sync_lease WHERE owner_id = ? AND generation = ? AND holder = ?)`,
+    )
+    .bind(ownerId, generation, batchId)
+  for (let i = 0; i < statements.length; i += 50) await db.batch([fence, ...statements.slice(i, i + 50)])
 
   return {
     versionCount: versions.length,

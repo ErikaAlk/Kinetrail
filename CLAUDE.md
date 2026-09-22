@@ -1,6 +1,6 @@
 # CLAUDE.md — Kinetrail
 
-个人体测（手机经 Health Connect 推送；早期为 FitDays 只读拉取）与训练事实的远程 MCP 服务器。Cloudflare Worker + D1 + OAuth Provider(KV) + Access OIDC。契约以 `ARCHITECTURE_DECISION.md`、`DATA_CONTRACT.md`、`MCP_CONTRACT.md` 为准；Health Connect 方案与实测见 `research/HEALTHCONNECT.md`；手机端在 `android/`；运维见 `docs/operations.md`；适配小米体脂秤 S800 的步骤见 `docs/xiaomi-s800.md`。
+个人体测（2026-09-22 起由 T6 上的体脂秤网关经 BLE 推送，之前是手机经 Health Connect 推送、更早是 FitDays 只读拉取）与训练事实的远程 MCP 服务器。Cloudflare Worker + D1 + OAuth Provider(KV) + Access OIDC。契约以 `ARCHITECTURE_DECISION.md`、`DATA_CONTRACT.md`、`MCP_CONTRACT.md` 为准；Health Connect 方案与实测见 `research/HEALTHCONNECT.md`；手机端在 `android/`；体脂秤网关在 `gateway/`（部署步骤在它的 README）；运维见 `docs/operations.md`；适配小米体脂秤 S800 的步骤见 `docs/xiaomi-s800.md`。
 
 ## 命令
 
@@ -19,8 +19,10 @@
 - Health Connect 推送（`src/ingest.ts`）：令牌只存 SHA-256；只写 `hc:` 前缀、`HC_PROFILE_REF` 的 weight 记录，碰不到 FitDays 来源；已存 `hc_id` 的值不可变，删除只写 tombstone 新版本；读取、合并、发布都在 `sync_lease` 内。推送批次被调度回收时不得重排成 FitDays 拉取任务（会登录 FitDays+ 顶掉手机）。FitDays+ 只把主用户写进 HC，FitDays+ 升级后重跑 G-HC3。
 - 识图报告（`reports[]`）：手机本机 OCR，请求里只有数字；只挂到同一分钟、体重相同、恰好一组的已入库 HC 称重上，挂上后不可变；只补 HC 没有的指标，不覆盖 HC 值。不要为了“能挂上”放宽匹配（按时间就近、忽略体重），也不要把图片传到服务端识别。手机端必需的只有检测时间和体重，其余指标没认出就整项不发（schema 里都是可选，服务端只补 `typeof value === 'number'` 的），不要退回“缺一项整张作废”；交叉校验不过是数字读错，仍然拦下。解析与交叉校验在 `android/.../report/ReportParser.kt`，请求 JSON 与服务端测试共用 `tests/fixtures/android-report.json`。
 - 训练写入：先查收据，再校验，再单个 D1 batch 提交（guard 表 CAS）；约束失败为 not_committed，其他批量错误且查不到收据为 unknown。V1 没有 hard delete，事实表由触发器兜底。
+- 体脂秤网关（`src/scale.ts`、`gateway/`）：独立令牌只能写；体重与阻抗由服务端从 `a7_hex` 自己解，体成分是网关按 WLA37 算的，服务端只查一致性与范围，不要改成相信网关另报的体重。身份是帧内容哈希（秤会重发缓存的旧结果），已入库的帧不再改。`SCALE_ACCEPT_AFTER` 同时是 HC 来源的终点，别让两个来源重叠。请求形状由 `tests/fixtures/gateway-measurement.json` 钉住，网关 `--check` 与服务端测试共用；改字段两边一起改。网关日志不写体重和阻抗。
+- 物理删除称重（`src/purge.ts`，用户 2026-09-22 要求）：只删本人 `hc:`/`ble:` 来源的称重，旧 FitDays 记录不开放（关联规则未验证）；在 lease 内单个 D1 batch 删全部版本与分块，写不含读数的墓碑。两个禁止删除触发器只放行 `purge_authorizations` 里的记录，别为了方便删掉触发器或在别处写授权行。推送入口都要先查墓碑（`deletedSources`），否则手机重读 HC 会把删掉的称重写回来。暂存的每个 batch 先验 lease（`stageBatch` 的 fence），别拿掉。
 - 手机日历（`src/calendar.ts`）：只读，复用推送令牌（用户 2026-09-16 批准的扩权），只读 `VISIBLE` 快照与当前生效的动作版本，不触发同步；输出不含 `raw_text`，发出前过 `findSecretPath`。响应形状由 `tests/fixtures/calendar-response.json` 钉住，服务端与 Android 单测共用，改字段要同时改两边。手表消耗热量走 `finalize_workout_session` 的 `calories_kcal`，不走 Health Connect。
-- 只存本人：`PROFILE_ALLOWLIST` 限定入库的 FitDays 成员（当前只有本人），其他成员和无 suid 的记录在消毒前丢弃。不要为“数据更全”清空它；换人时写 profile_ref，不写原始 suid。事实表唯一的物理删除是用户授权的 `scripts/purge-non-owner-profiles.sql`，已于 2026-09-15 执行。
+- 只存本人：`PROFILE_ALLOWLIST` 限定入库的 FitDays 成员（当前只有本人），其他成员和无 suid 的记录在消毒前丢弃。不要为“数据更全”清空它；换人时写 profile_ref，不写原始 suid。事实表的物理删除只有两处：用户授权的一次性 `scripts/purge-non-owner-profiles.sql`（2026-09-15 已执行）和手机上按条删称重。网关来源分不出是谁，用户同意放宽为「与本人近 14 天体重中位数差超过 `SCALE_WEIGHT_WINDOW_KG` 的不收，漏进来的室友在手机上删」（DATA_CONTRACT 第 10 节）；别把窗口调得更宽，也别在没有参考体重时放行。
 - 每次同步尝试一个 batch_id；只有持有 lease 的尝试能发布或写错误状态。
 - 趋势按请求时区（默认 Asia/Shanghai）自然日：先日中位数，再对有数据日等权平均；派生值逐次先算；bfr≤0 不参与体脂类指标。
 
@@ -40,4 +42,5 @@
 - ML Kit 在报告的衬线字体上会读错形近字（体→休、控→挖、肉→內、龄→齡、级→級、成→咸、率→奉/牽、抗→坑）、多认一个字（「肌肉均衡」→「肌肉內均衝」）、读错符号（`|`、`%`→`96`、`/1`→`1`、`0`→`o`），还会丢小数点（「157.7%」→「1577%」）或把小数点读成逗号（「45.9」→「45,9」，2026-09-18 真机实测）。同一份报告每天错的地方都不一样，两处叠加（「內脏脂肪等級」「身体休年齡」，2026-09-19 实测）就超出一处容错，所以形近字按组归一（`ReportParser.kt` 的 `CONFUSABLE`）再比编辑距离，别再逐次往表里补一个误读。容错阈值只能是 1：「分段脂肪分析」与「肌肉脂肪分析」只差两个字。数字之间的逗号在 `normalize` 换回小数点（否则只截到前半段，再按丢小数点还原会差十倍），数字按报告固定小数位还原（`ICERUnitConfig.o()` 保证质量/比例/阻抗一位小数、表里体重两位）。改解析前先看两份真实读法：`mlkit-replica-ocr.json`（模拟器 + 近似图）与 `mlkit-real-report-ocr.json`（真机 + FitDays+ 原图）。
 - 用 `adb shell am start -a android.intent.action.SEND --eu android.intent.extra.STREAM content://media/...` 模拟分享会因 shell 没有媒体授权报 SecurityException，验证识图改走 App 里的相册选图。Git Bash 里的 adb 路径参数要加 `MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 会被改写成 Windows 路径。
 - Kotlin KDoc 里写 `values*/` 这类含 `*/` 的路径会提前结束注释，编译报一串 “Expecting a top level declaration”。
+- T6 的 USB 蓝牙适配器是 RTL8761BU，`armbian-firmware` 里没有它的固件，而 Debian 的 `firmware-realtek` 与 `armbian-firmware` 互相冲突，直接 `apt install` 会卸掉整包 Armbian 固件。只从 Debian 包里取两个 `rtl8761bu_*.bin`（`gateway/README.md` 第 1 步）。用户住宿舍，身边只有 T6；香橙派在家里，连不到是正常的。
 - 手机插在 VID 2109 的 USB 集线器上时，Windows 能枚举 ADB 接口，但 adb 读序列号报错 31、`adb devices` 为空；直插笔记本 USB 口。ColorOS 上 `adb install` 要在手机上点确认，命令超时不代表失败。

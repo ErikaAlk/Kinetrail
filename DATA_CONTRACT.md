@@ -229,7 +229,7 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 **同步**
 
 - 窗口 180 天、相邻窗口重叠 1 天、最新端点为当前时间 +1 天；增量从上个完整批次的检查点往前重叠 7 天。partial 批次不推进检查点。
-- 成员白名单（2026-09-15，用户决定只存本人）：`PROFILE_ALLOWLIST` 非空时，只处理其中 profile_ref 的记录与 users 昵称，判断先于消毒；其他成员与无 suid（`p_unknown`，无法证明归属）的记录不落库、不计入 blocked、不使批次 partial，计数写入 `counts_json.excluded`。为空时保留全部成员。已入库的其他成员数据由一次性脚本 `scripts/purge-non-owner-profiles.sql` 物理删除（事实表“不物理删除”的唯一例外，经用户明确授权）。
+- 成员白名单（2026-09-15，用户决定只存本人）：`PROFILE_ALLOWLIST` 非空时，只处理其中 profile_ref 的记录与 users 昵称，判断先于消毒；其他成员与无 suid（`p_unknown`，无法证明归属）的记录不落库、不计入 blocked、不使批次 partial，计数写入 `counts_json.excluded`。为空时保留全部成员。已入库的其他成员数据由一次性脚本 `scripts/purge-non-owner-profiles.sql` 物理删除（经用户明确授权）。另一个例外是手机上按条物理删除称重，见第 11 节。
 - 未知数据集为空数组或 null 时只记入 manifest，不标 partial；有内容才 fail-closed 并标 partial。manifest 对未知数据集记形态、条数、键名、类型，不记值。
 - 每次尝试一个 batch_id；暂存分多个 D1 batch 写入（未发布不可见），发布为单个 D1 batch（lease 守卫 + 置已发布 + last_seen + 投影 + sync_meta + 批次状态 + 释放 lease）。
 - stale：从未成功、最后成功超过 15 分钟，或最后一次尝试失败晚于最后成功。
@@ -256,7 +256,7 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 
 **版本与删除**：已存 `hc_id` 的类型、值、修改时间与组的时区偏移不可变，冲突整组拒绝；只能补齐组内从未出现过的类型。HC 删除（`deleted_hc_ids`）把整条记录移入组的 `deleted_records` 并写新版本，删体重即 `is_deleted=1`；已删 id 与已删类型都不再接收；不物理删除。这是“来源明确 tombstone 才产生删除版本”（第 3 节）在 HC 来源上的实现。
 
-**截断与去重**：`HC_ACCEPT_AFTER`（线上为 2026-09-15T09:17:00+08:00，旧 FitDays 最后一条测量）之前的 HC 组不入库；两个来源不做跨来源匹配，也不同时导入同一时段。
+**截断与去重**：`HC_ACCEPT_AFTER`（线上为 2026-09-15T09:17:00+08:00，旧 FitDays 最后一条测量）之前的 HC 组不入库；设了 `SCALE_ACCEPT_AFTER`（体脂秤网关接手的时刻，第 10 节）后，晚于它的 HC 组拒绝为 `HC_AFTER_CUTOVER`。来源之间不做跨来源匹配，也不同时导入同一时段。在手机上物理删除过的组拒绝为 `MEASUREMENT_DELETED`（第 11 节）。
 
 **识图报告**（2026-09-15）：手机本机 OCR FitDays+「人体成分分析报告」图片，在同一端点的可选 `reports[]` 里只发数字（schema 见 `src/ingest.ts` 的 `REPORT_SCHEMA`，Android 端与服务端测试共用 `tests/fixtures/android-report.json`）。
 
@@ -285,3 +285,29 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 **上限**：一次最多 200 个会话、600 个动作版本、400 条体测，命中任一上限时 `truncated=true`，界面必须说出来而不是假装完整。
 
 **契约固定**：`tests/fixtures/calendar-response.json` 是服务端测试逐字比对的响应，手机端解析的单测读同一个文件（与 `android-report.json` 同一做法），两边不会各自漂移。
+
+**删除用字段**（2026-09-22）：每条体测带 `record_id`（`raw_records.id`）与 `deletable`（只对 `hc:`、`ble:` 来源为真）。
+
+## 10. 体脂秤网关来源（2026-09-22，Opus 5）
+
+来源 `ble`：常驻主机（本人实例是 NanoPC-T6）上的网关（`gateway/`）经 BLE 只读连沃莱 P3，收到 A7 结果帧后按 WLA37 算体成分，推送到 `POST /ingest/scale`（实现为 `src/scale.ts`）。上秤不需要手机。协议与算法见 `research/P3.md`，请求形状由 `tests/fixtures/gateway-measurement.json` 钉住（网关自检与服务端测试共用）。
+
+- **鉴权**：独立令牌 `SCALE_INGEST_TOKEN_SHA256`，只能写这个入口；不能读、不能删。限流、有界读取、严格 schema、`findSecretPath` 同 HC 入口。
+- **请求**：每项 `time_ms`（网关收到 A7 的时刻；秤的时钟不可信）、`a7_hex`（A7 载荷原样）、`algorithm=WLA37`、`inputs`（身高、整岁年龄、性别、people_type）、`metrics`（WLA37 输出，`bmi` 必有）。体重与 10 个阻抗由服务端从 `a7_hex` 自己解，不收网关另报的体重。体成分是网关算的估算值：服务端只查一致性（带体成分时算法号必须是 37 且恰好 10 个阻抗；BMI 必须是这帧体重按声明身高算出来的，差不超过 0.06）与范围，越界的指标不进索引并标 `<指标>_out_of_range`。
+- **身份**：`dataset=weight`、`profile_ref=HC_PROFILE_REF`、`source_record_id=ble:p3:<SHA-256(a7_hex) 前 32 位>`、`identity_kind=content_hash`。同一帧就是同一次称重：秤下次连接可能重发缓存的旧结果，已入库的帧再来计 `unchanged`，保留第一次收到的时刻。帧里含秤自己的时间戳字节，两次不同称重的帧不会相同。
+- **raw 与索引**：raw 存 `a7_hex`、解出的体重与阻抗、inputs、metrics（键名排序）。索引 `weight_kg`（帧）、`bmi`、`body_fat_pct`、`muscle_pct`、`subcutaneous_fat_pct`、`visceral_fat_index`、`bone_mass_kg`、`body_water_pct`、`protein_pct`、`skeletal_muscle_pct`、`bmr_kcal`、`body_age`；`body_score` 只在 raw。标 `source_ble_p3`，另标 `wla37_computed_by_gateway` 或 `weight_only`（阻抗过不了算法门限时只有体重与 BMI）。
+- **只存本人**（用户 2026-09-22 决定放宽）：A7 里没有用户标识。服务端以本人近 14 天已发布有效体重的中位数为参考（这段时间没有就用最近一条），相差超过 `SCALE_WEIGHT_WINDOW_KG`（默认 4）整条拒绝为 `SCALE_WEIGHT_OUT_OF_WINDOW`、不落库；库里没有任何参考时拒绝为 `SCALE_NO_REFERENCE`。体重接近本人的室友会被当成本人入库，由用户在手机上物理删除（第 11 节）。这是对「宁可漏收也不错收」的明确放宽，只适用于这个来源。
+- **其他拒绝码**：`SCALE_FRAME_INVALID`（帧长度与阻抗个数对不上）、`SCALE_VALUE_OUT_OF_RANGE`（体重不在 (2, 400]）、`SCALE_BEFORE_CUTOVER`、`SCALE_FUTURE_TIME`、`SCALE_METRICS_INCONSISTENT`、`SCALE_DUPLICATE`（同一请求同一帧）、`MEASUREMENT_DELETED`。
+- **切换**：`SCALE_ACCEPT_AFTER` 之前的称重拒绝；它同时是 HC 来源的终点（第 8 节）。未设时入口返回 `not_configured`。
+- **批次**：每次推送一个 `sync_batches`（`source_region='ble'`），在 `sync_lease` 内读墓碑、已存与参考体重、暂存、原子发布；中断批次由调度标失败但不重排成 FitDays 拉取。
+
+## 11. 物理删除称重（2026-09-22，用户要求）
+
+手机「记录」页每次称重的卡片底部可以永久删除这次称重（`POST /app/measurements/delete {record_id}`，实现为 `src/purge.ts`）。这是事实表「不物理删除」的第二个例外，经用户明确要求；训练事实仍然没有物理删除。
+
+- **鉴权**：复用手机推送令牌（`HC_INGEST_TOKEN_SHA256`），又一次扩权：令牌泄漏后能永久删体测。按 IP 20 次/分钟、全局 10 次/分钟限流；处置靠按运维手册第 6 节轮换令牌，恢复靠加密备份与 D1 Time Travel。
+- **范围**：本人（`HC_PROFILE_REF`）、`dataset=weight`、来源为 `hc:` 或 `ble:` 的一条记录。旧 FitDays 记录连着阻抗等关联记录，而关联规则没有验证（`JOIN_RULES_VERIFIED=false`），不开放（`not_deletable`）。别的成员或不存在的 ID 返回 `not_found`。
+- **事务**：在 `sync_lease` 内读记录、校验，然后单个 D1 batch：lease 守卫 → 写 `purge_authorizations` → 删这条记录的全部分块、全部版本（含未发布）与身份行 → 写墓碑 → 删授权行 → 释放 lease。`raw_records_no_delete`、`rrv_published_no_delete` 两个触发器只放行授权表里的记录（迁移 0003），别处的误删照旧被数据库拒绝；已发布版本仍不可改写。暂存的每个 D1 batch 也先验 lease，lease 过期被删除接管后，旧推送连身份行也写不进去。
+- **墓碑**：`deleted_measurements(owner_id, key_hash, deleted_at)`，`key_hash = SHA-256(["v1", dataset, profile_ref, source_record_id])`，不存读数。它挡住手机重读 Health Connect（基线过期后会重读 30 天）和网关重发把删掉的称重写回来。来源键里有称重时刻，可以被枚举，所以墓碑不算匿名化。
+- **一致性**：删除不改 generation。之前签发的分页 cursor 继续翻页时，被删的记录直接缺失；这是有意的，不保留删除前的快照。
+- **副本**：删除后 D1 Time Travel 与已有加密备份在各自保留期内仍有这条记录；恢复到删除之前的备份会把它带回来，恢复后要对照最新的墓碑重新删（运维手册第 5 节）。Health Connect 里的原记录不受影响（App 只有读取权限）。

@@ -20,6 +20,7 @@ import androidx.lifecycle.lifecycleScope
 import click.erikaalk.kinetrail.hc.calendar.CalendarRange
 import click.erikaalk.kinetrail.hc.calendar.fetchCalendar
 import click.erikaalk.kinetrail.hc.calendar.parseCalendar
+import click.erikaalk.kinetrail.hc.calendar.postDeleteMeasurement
 import click.erikaalk.kinetrail.hc.report.ReportFormat
 import click.erikaalk.kinetrail.hc.report.recognizeReport
 import click.erikaalk.kinetrail.hc.report.toIngestJson
@@ -142,12 +143,29 @@ class MainActivity : ComponentActivity(), AppActions {
         if (month != state.month || state.selectedDate == null) {
             state.selectedDate = LocalDate.now().takeIf { YearMonth.from(it) == month }
         }
+        state.deleteError = null
         state.month = month
         loadCalendar(month)
     }
 
     override fun selectDate(date: LocalDate) {
         state.selectedDate = if (state.selectedDate == date) null else date
+    }
+
+    /** 物理删除一次称重（界面已经确认过），删完重读这个月；失败的原因显示在日历上。 */
+    override fun deleteMeasurement(recordId: String) {
+        val token = TokenStore.load(prefs) ?: return
+        if (state.deletingRecord != null) return
+        state.deletingRecord = recordId
+        state.deleteError = null
+        lifecycleScope.launch {
+            val result = runCatching { postDeleteMeasurement(token, recordId) }
+            state.deletingRecord = null
+            result.exceptionOrNull()?.let {
+                state.deleteError = if (it is PushException) it.message else "删除失败：${it.javaClass.simpleName}"
+            }
+            loadCalendar(state.month)
+        }
     }
 
     /**

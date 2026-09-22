@@ -224,6 +224,13 @@ describe('日历读取入口', () => {
     expect(dayOf(body, '2026-09-16').calories_kcal).toBeNull()
     expect(dayOf(body, '2026-09-16').sessions).toHaveLength(1)
 
+    // 手机推送的称重可以在手机上删；record_id 是库内随机 ID，比对夹具前换成夹具里的占位值
+    expect(day.measurements[0].deletable).toBe(true)
+    expect(day.measurements[0].record_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    )
+    day.measurements[0].record_id = '00000000-0000-4000-8000-000000000001'
+
     // 整份响应与 tests/fixtures/calendar-response.json 逐字相同；手机端解析的单测读同一个文件，
     // 两边不会各自漂移（与 android-report.json 同一做法）。
     expect(body).toEqual(calendarFixture)
