@@ -11,10 +11,10 @@
 | 配置 | 账户、域名、资源 ID、Access 地址与本人身份标识不进仓库：真实值在本机 `wrangler.local.jsonc`（git 忽略），其余标识记在本机 `ops.local.md`。**本人实例的 wrangler 命令一律加 `-c wrangler.local.jsonc`**，不加就会读到仓库里的占位符 |
 | 账户 | 唯一账户 |
 | 入口 | Workers 自定义域名；`workers_dev`/`preview_urls` 关闭 |
-| D1 | `kinetrail`，已应用 `0001_init.sql`、`0002_session_calories.sql`（`0003_scale_and_purge.sql` 随体脂秤网关上线，见第 11 节） |
+| D1 | `kinetrail`，已应用 `0001_init.sql`、`0002_session_calories.sql`、`0003_scale_and_purge.sql`（2026-09-22，体脂秤网关与物理删除，见第 11、12 节） |
 | KV | `kinetrail-OAUTH_KV` |
 | Access for SaaS | 应用 `Kinetrail`，IdP 邮箱验证码，策略“邮箱白名单”，PKCE + client secret |
-| 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY`、`HC_INGEST_TOKEN_SHA256`，以及留作备用的 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（第 9 节末尾） |
+| 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY`、`HC_INGEST_TOKEN_SHA256`、`SCALE_INGEST_TOKEN_SHA256`（2026-09-22），以及留作备用的 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（第 9 节末尾） |
 | 本人绑定 | `OWNER_OIDC_SUB` 已写入 `wrangler.local.jsonc` 的 vars（邮箱验证码登录得到的 sub；换登录邮箱会得到不同 sub，需重新绑定） |
 | 成员范围 | `PROFILE_ALLOWLIST` 只含本人的 FitDays 成员；同一账户下其他 5 个成员与无 suid 的记录不落库，历史数据已于 2026-09-15 物理删除 |
 | 定时调度 | Durable Object `SyncScheduler`（SQLite 存储，实例名 `scheduler`）的 alarm 每 10 分钟执行一次；本账户 cron 触发器注册成功但从不投递，`*/10` 仍保留 |
@@ -375,3 +375,5 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 | 2026-09-15 | 第二次真机推送：新增 20:42:50、20:43:44 两次经测量页的称重（两次读数完全相同），批次 published、拒绝 0；14:22、16:54 两组未产生新版本（增量只推变更时刻） | 通过 |
 | 2026-09-15 | HC 删除线上实测：用户在系统 Health Connect 删除当天全部 4 组测试称重（非真实数据）后同步，批次 published、`deletions_matched` 24、`deletions_unmatched` 0；4 组各生成 `is_deleted=1` 的新版本（有效记录 0、已删记录 6），旧版本保留。当天 09:17 由旧 FitDays 拉取的称重经用户确认为真实数据，保持不变 | 通过 |
 | 2026-09-17 | G2 云端容量/D1 事务/云端恢复 | 通过（用户确认已验证） |
+| 2026-09-22 | 体脂秤网关与物理删除上线（PR #32、#33）：线上 D1 应用 0003 前记了 Time Travel 书签（`ops.local.md`）；迁移后两个禁止删除触发器含 `purge_authorizations`、禁止改写触发器仍在、授权表与墓碑为 0、原有 167 条记录 / 177 个已发布版本不变。写入 `SCALE_INGEST_TOKEN_SHA256`，`SCALE_ACCEPT_AFTER=2026-09-22T19:54:00+08:00`，部署 `925fc661`。冒烟：`/healthz` 200；网关入口与删除入口无令牌 401、GET 404；网关令牌发空请求 200 零计数、坏请求 400 | 通过 |
+| 2026-09-22 | 网关真机端到端（T6，BlueZ）：用户上秤后网关连上秤、拿到 A7（无分片，另有一帧用途未知的 `AA`/29 字节），WLA37 算出全部指标，入库为 `ble:p3:` 记录（`content_hash`，10 个阻抗，inputs 年龄 19 / 身高 164），读数与前几天 FitDays+ 同一水平。发现并修复：`DynamicUser` 连不上系统 D-Bus（改固定用户）；IPv6 不通让推送晚一分钟、且推送阻塞期间不扫描蓝牙（改为先连 IPv4、推送挪到后台线程，推送耗时 61 秒 → 0.8 秒） | 通过；手机 0.8.0 安装与删除真机操作待手机连回电脑 |
