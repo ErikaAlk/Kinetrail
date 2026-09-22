@@ -1,0 +1,25 @@
+{
+  "time_ms": 1789948800000,
+  "a7_hex": "a76a00000025011170000a012c0bb80bb80af00af000fa0af00af009c409c4",
+  "algorithm": "WLA37",
+  "inputs": {
+    "height_cm": 175,
+    "age": 36,
+    "sex": 1,
+    "people_type": 0
+  },
+  "metrics": {
+    "bmi": 22.9,
+    "body_fat_pct": 20.5,
+    "muscle_pct": 74.2,
+    "subcutaneous_fat_pct": 14.7,
+    "visceral_fat_index": 5.0,
+    "bone_mass_kg": 3.7,
+    "body_water_pct": 58.3,
+    "protein_pct": 15.9,
+    "skeletal_muscle_pct": 44.9,
+    "bmr_kcal": 1573.0,
+    "body_age": 35.0,
+    "body_score": 74.0
+  }
+}

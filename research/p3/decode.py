@@ -30,13 +30,16 @@ class Measurement:
 
 
 def frame_payload(frame: bytes) -> Optional[bytes]:
-    """校验一帧并取出载荷；校验和不过返回 None。
+    """校验一帧并取出载荷；声明长度对不上或校验和不过返回 None。
 
     帧头是 [0]序号 [1:3]载荷长度 u16BE [3]分片，尾字节是 sum(载荷) & 0x1F。
+    分片还没见过（P3.md 第 1 节），分片帧的声明长度大于本帧载荷，会在这里被拒，不猜着拼。
     """
     if len(frame) < 6:
         return None
     payload = frame[4:-1]
+    if int.from_bytes(frame[1:3], "big") != len(payload):
+        return None
     return payload if frame[-1] == (sum(payload) & 0x1F) else None
 
 
@@ -56,6 +59,8 @@ def decode(payload: bytes) -> Optional[Measurement]:
     if payload[0] == TYPE_RESULT:
         # [1:5]时间戳 [5]算法号 [6:9]体重 u24BE 克 [9]0x00 [10]阻抗个数 [11:]个数×u16BE
         # 体重按 u24 读：单次样本里 u16 恰好同值，但 65.535 kg 以上会溢出。
+        if len(payload) < 11 or len(payload) < 11 + 2 * payload[10]:
+            return None
         n = payload[10]
         imps = [int.from_bytes(payload[11 + 2 * i:13 + 2 * i], "big") / 10.0
                 for i in range(n)]
@@ -90,6 +95,9 @@ def _self_check() -> None:
     assert abs(m.weight_kg - 70.0) < 1e-9, m.weight_kg
 
     assert frame_payload(a7[:-1] + bytes([(a7[-1] + 1) & 0xFF])) is None, "坏校验和应当被拒"
+    short = a7[:3] + a7[3:-3] + bytes([sum(a7[4:-3]) & 0x1F])
+    assert frame_payload(short) is None, "声明长度与载荷不符（截短、分片）应当被拒"
+    assert decode(a7[4:24]) is None, "阻抗没收全的 A7 不能读成零"
     print("ok")
 
 

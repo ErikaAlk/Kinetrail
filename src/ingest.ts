@@ -5,8 +5,10 @@
 import { Validator } from '@cfworker/json-schema'
 import type { Deps } from './mcp'
 import { failBatch, type PreparedRecord, publishBatch, stageBatch } from './measurements'
+import { deletedSources } from './purge'
 import { consumeRateLimit } from './ratelimit'
 import { findSecretPath } from './sanitize'
+import { scaleCutover } from './scale'
 import { acquireLease } from './sync'
 import {
   byteLength,
@@ -226,8 +228,15 @@ export function normalizeValue(value: number): number {
 }
 
 /** 单组校验：返回拒绝码，通过返回 null。 */
-function groupProblem(g: IncomingGroup, acceptAfterMs: number, nowMs: number): string | null {
+function groupProblem(
+  g: IncomingGroup,
+  acceptAfterMs: number,
+  scaleAfterMs: number | null,
+  nowMs: number,
+): string | null {
   if (g.time_ms <= acceptAfterMs) return 'HC_BEFORE_CUTOVER'
+  // 体脂秤网关接手之后的称重只收网关那一路（两个来源不同时导入同一时段）。
+  if (scaleAfterMs !== null && g.time_ms > scaleAfterMs) return 'HC_AFTER_CUTOVER'
   if (g.time_ms > nowMs + FUTURE_SKEW_MS) return 'HC_FUTURE_TIME'
   const types = new Set<string>()
   for (const r of g.records) {
@@ -436,7 +445,7 @@ async function loadStored(
 }
 
 /** HC_PROFILE_REF 写错会新建一个成员，让所有省略 profile_ref 的体测工具返回 PROFILE_REQUIRED；库里已有成员时必须命中其一。 */
-async function profileMatches(db: D1Database, ownerId: string, profileRef: string): Promise<boolean> {
+export async function profileMatches(db: D1Database, ownerId: string, profileRef: string): Promise<boolean> {
   const row = await db
     .prepare(
       `SELECT EXISTS (SELECT 1 FROM profiles WHERE owner_id = ?1) AS any_profile,
@@ -454,6 +463,7 @@ export async function ingestHealthConnect(
   acceptAfterMs: number,
   payload: IngestPayload,
   deps: Deps,
+  scaleAfterMs: number | null = null,
 ): Promise<IngestResult | 'busy' | 'profile_mismatch'> {
   const nowMs = deps.now()
   const result: IngestResult = {
@@ -466,7 +476,9 @@ export async function ingestHealthConnect(
   const incoming = new Map<string, IncomingGroup>()
   for (const g of payload.groups) {
     const key = keyOf(g.time_ms)
-    const problem = incoming.has(key) ? 'HC_DUPLICATE_GROUP' : groupProblem(g, acceptAfterMs, nowMs)
+    const problem = incoming.has(key)
+      ? 'HC_DUPLICATE_GROUP'
+      : groupProblem(g, acceptAfterMs, scaleAfterMs, nowMs)
     if (problem) result.rejected.push({ time_ms: g.time_ms, code: problem })
     else incoming.set(key, g)
   }
@@ -493,6 +505,14 @@ export async function ingestHealthConnect(
     .run()
 
   try {
+    // 在手机上物理删除过的称重不再接收：Health Connect 里原记录还在，基线过期后重读 30 天会把它推回来。
+    for (const key of await deletedSources(db, ownerId, 'weight', profileRef, [...incoming.keys()])) {
+      result.rejected.push({
+        time_ms: (incoming.get(key) as IncomingGroup).time_ms,
+        code: 'MEASUREMENT_DELETED',
+      })
+      incoming.delete(key)
+    }
     // 读取在拿到 lease 之后：合并基于的已存版本不会被并发推送改掉。
     const stored = await loadStored(db, ownerId, profileRef, [...incoming.keys()], deletedIds, [
       ...reports.keys(),
@@ -619,7 +639,10 @@ export async function handleIngest(request: Request, env: Env, deps: Deps): Prom
       return reply(400, { error: 'invalid_payload' })
     }
     const acceptAfterMs = parseInstant(env.HC_ACCEPT_AFTER ?? '')
-    if (acceptAfterMs === null || !env.HC_PROFILE_REF) return reply(503, { error: 'not_configured' })
+    const scaleAfterMs = scaleCutover(env)
+    if (acceptAfterMs === null || scaleAfterMs === 'invalid' || !env.HC_PROFILE_REF) {
+      return reply(503, { error: 'not_configured' })
+    }
 
     const result = await ingestHealthConnect(
       env,
@@ -628,6 +651,7 @@ export async function handleIngest(request: Request, env: Env, deps: Deps): Prom
       acceptAfterMs,
       payload as IngestPayload,
       deps,
+      scaleAfterMs,
     )
     if (result === 'busy' || result === 'profile_mismatch') {
       logEvent({ event: 'ingest', status: result })

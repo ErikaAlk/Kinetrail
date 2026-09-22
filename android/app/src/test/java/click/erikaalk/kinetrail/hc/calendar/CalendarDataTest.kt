@@ -66,6 +66,19 @@ class CalendarDataTest {
     }
 
     @Test
+    fun `手机推送的称重带着删除用的 record_id，缺字段时不能删`() {
+        val measurement = range.days.getValue(LocalDate.of(2026, 9, 14)).measurements.single()
+        assertEquals("00000000-0000-4000-8000-000000000001", measurement.recordId)
+        assertTrue(measurement.deletable)
+        // 旧服务端没有这两个字段：照常显示，只是不给删
+        val old = parseCalendar(
+            """{"days":[{"date":"2026-09-14","sessions":[],"measurements":[{"measured_at":null,"metrics":{"weight_kg":70}}]}]}""",
+        ).days.getValue(LocalDate.of(2026, 9, 14)).measurements.single()
+        assertEquals(null, old.recordId)
+        assertEquals(false, old.deletable)
+    }
+
+    @Test
     fun `没见过的指标按原键名排在其他读数最后，不会丢，也不猜单位`() {
         val groups = metricGroups(mapOf("weight_kg" to 70.2, "zz_new_metric" to 7.0, "whr" to 0.82))
         assertEquals(

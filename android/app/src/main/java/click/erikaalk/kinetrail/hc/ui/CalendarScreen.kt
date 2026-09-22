@@ -23,9 +23,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -192,6 +194,14 @@ fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
             }
         }
 
+        state.deleteError?.let {
+            InlineBanner(
+                it,
+                tone = BannerTone.Error,
+                modifier = Modifier.padding(horizontal = KtSpacing.Padding.pageX).padding(top = KtSpacing.Gap.group),
+            )
+        }
+
         val selected = state.selectedDate
         if (selected == null) {
             Text(
@@ -204,7 +214,14 @@ fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
             )
         } else {
             // 数据还没到（读取中、失败）时不能说「没有记录」，只留日期标题
-            DayDetail(selected, state.calendarDays[selected], loaded = loaded, truncated = state.calendarTruncated)
+            DayDetail(
+                selected,
+                state.calendarDays[selected],
+                loaded = loaded,
+                truncated = state.calendarTruncated,
+                deletingRecord = state.deletingRecord,
+                onDelete = actions::deleteMeasurement,
+            )
         }
     }
 }
@@ -379,7 +396,14 @@ private const val LARGE_FONT_SCALE = 1.3f
 private fun TextStyle.tabular() = copy(fontFeatureSettings = "tnum")
 
 @Composable
-private fun DayDetail(date: LocalDate, day: CalendarDay?, loaded: Boolean, truncated: Boolean) {
+private fun DayDetail(
+    date: LocalDate,
+    day: CalendarDay?,
+    loaded: Boolean,
+    truncated: Boolean,
+    deletingRecord: String?,
+    onDelete: (String) -> Unit,
+) {
     val colors = ktColors
     SectionHeader(
         "${date.monthValue} 月 ${date.dayOfMonth} 日 ${WEEKDAYS[date.dayOfWeek.value - 1]}",
@@ -423,7 +447,14 @@ private fun DayDetail(date: LocalDate, day: CalendarDay?, loaded: Boolean, trunc
             else -> 0.dp
         }
         // 展开状态跟着这一天的这一次称重走，换了日期不会串到别的记录上
-        key(date, index) { MeasurementCard(measurement, Modifier.padding(top = top)) }
+        key(date, index) {
+            MeasurementCard(
+                measurement,
+                deleting = measurement.recordId != null && measurement.recordId == deletingRecord,
+                onDelete = measurement.recordId?.takeIf { measurement.deletable }?.let { id -> { onDelete(id) } },
+                modifier = Modifier.padding(top = top),
+            )
+        }
     }
 }
 
@@ -614,9 +645,15 @@ private fun SetTableView(table: SetTable, modifier: Modifier = Modifier) {
 /**
  * 一次称重。主区左边是体重，竖线右边竖排体脂率和 BMI；其余指标按组收在「展开指标」里，一项一行、数值靠右。
  * 系统字号放大后主区改成上下排。只有体重时是一张紧凑卡，没有右栏、展开和 BIA 说明。
+ * [onDelete] 不为空时卡底有「删除这次称重」，先弹确认；室友上秤被当成本人记进来时靠它删掉。
  */
 @Composable
-private fun MeasurementCard(measurement: BodyMeasurement, modifier: Modifier = Modifier) {
+private fun MeasurementCard(
+    measurement: BodyMeasurement,
+    deleting: Boolean,
+    onDelete: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
     val colors = ktColors
     val groups = metricGroups(measurement.metrics)
     val summary = groups.firstOrNull { it.title == null }?.rows.orEmpty()
@@ -685,6 +722,64 @@ private fun MeasurementCard(measurement: BodyMeasurement, modifier: Modifier = M
                 modifier = Modifier.padding(top = KtSpacing.Gap.control),
             )
         }
+        if (onDelete != null) {
+            CardDivider()
+            DeleteRow(measurement, deleting, onDelete)
+        }
+    }
+}
+
+/** 卡底的删除入口。点了先弹确认，写清删的是哪一次、删了之后哪里还有副本；删除中不能再点。 */
+@Composable
+private fun DeleteRow(measurement: BodyMeasurement, deleting: Boolean, onDelete: () -> Unit) {
+    val colors = ktColors
+    var confirming by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .ktFocusRing(interaction, KtRadius.smallShape)
+            .clip(KtRadius.smallShape)
+            .clickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
+                enabled = !deleting,
+                role = Role.Button,
+                onClick = { confirming = true },
+            )
+            .defaultMinSize(minHeight = 48.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (deleting) "删除中…" else "删除这次称重",
+            style = KtType.body,
+            color = if (deleting) colors.text.tertiary else colors.semantic.error.text,
+        )
+    }
+    if (confirming) {
+        val what = listOfNotNull(
+            measurement.measuredAt?.format(DateTimeFormatter.ofPattern("M 月 d 日 HH:mm")),
+            measurement.metrics["weight_kg"]?.let { "${num(it)} kg" },
+        ).joinToString(" ")
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text(if (what.isEmpty()) "永久删除这次称重？" else "永久删除 $what 的称重？") },
+            text = {
+                Text(
+                    "这次称重会从 Kinetrail 删除，身迹和 ChatGPT 里都不再出现，删除后无法恢复。" +
+                        "已有的备份和数据库的时间点恢复里仍有这条记录，要等它们过期才会消失。" +
+                        "Health Connect 里的原记录（如果有）不会被删，也不会再同步回来。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirming = false
+                    onDelete()
+                }) { Text("永久删除", color = colors.semantic.error.text) }
+            },
+            dismissButton = { TextButton(onClick = { confirming = false }) { Text("取消") } },
+        )
     }
 }
 

@@ -3,6 +3,7 @@
 // 输出过 findSecretPath，与 MCP 只读工具同一条底线；日志只经 logEvent。
 
 import type { Deps } from './mcp'
+import { DELETABLE_SOURCE } from './purge'
 import { readSnapshot, toSummary, type VersionRow, VISIBLE } from './queries'
 import { consumeRateLimit } from './ratelimit'
 import { findSecretPath } from './sanitize'
@@ -188,7 +189,8 @@ async function readCalendar(env: Env, range: Window, deps: Deps) {
 
   const measurements = await db
     .prepare(
-      `SELECT v.* FROM raw_record_versions v WHERE ${VISIBLE} AND v.owner_id = ?2 AND v.dataset = 'weight'
+      `SELECT v.*, r.source_record_id FROM raw_record_versions v JOIN raw_records r ON r.id = v.raw_record_id
+       WHERE ${VISIBLE} AND v.owner_id = ?2 AND v.dataset = 'weight'
        AND v.is_deleted = 0 AND v.measured_at IS NOT NULL AND v.measured_at >= ?3 AND v.measured_at < ?4
        AND (?5 IS NULL OR v.profile_ref = ?5)
        ORDER BY v.measured_at, v.raw_record_id LIMIT ?6`,
@@ -201,7 +203,7 @@ async function readCalendar(env: Env, range: Window, deps: Deps) {
       profile,
       MAX_MEASUREMENTS + 1,
     )
-    .all<VersionRow>()
+    .all<VersionRow & { source_record_id: string }>()
   const measurementRows = measurements.results.slice(0, MAX_MEASUREMENTS)
 
   const byEntrySession = new Map<string, EntryView[]>()
@@ -248,6 +250,9 @@ async function readCalendar(env: Env, range: Window, deps: Deps) {
     const summary = toSummary(row, tz)
     if (summary.local_date === null) continue
     dayOf(summary.local_date).measurements.push({
+      // 手机上删除用：record_id 是库内 ID，deletable 只对手机推送和网关来源为真（旧 FitDays 记录不开放删除）。
+      record_id: row.raw_record_id,
+      deletable: DELETABLE_SOURCE.test(row.source_record_id),
       measured_at: summary.measured_at,
       metrics: summary.metrics,
       quality_flags: summary.quality_flags,

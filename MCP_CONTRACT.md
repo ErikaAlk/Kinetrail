@@ -104,7 +104,7 @@ JSON Schema 的缺失字段为“未提供”，不默认写成 null/0；所有 
 
 ## 3. 分页与一致性
 
-keyset cursor 由服务端签名，绑定 owner、tool、查询参数 hash、排序 `(measured_at,record_ref,version_ref)`、已发布 generation、过期时间。禁止裸 OFFSET 和只按 measured_time 排序。数据修订期间继续旧 cursor 读同一个快照，不重不漏；cursor 过期返回 CURSOR_EXPIRED，明确从头重查。raw 大对象分块固定 version hash，不能下载一半换到新版本。
+keyset cursor 由服务端签名，绑定 owner、tool、查询参数 hash、排序 `(measured_at,record_ref,version_ref)`、已发布 generation、过期时间。禁止裸 OFFSET 和只按 measured_time 排序。数据修订期间继续旧 cursor 读同一个快照，不重不漏；cursor 过期返回 CURSOR_EXPIRED，明确从头重查。例外是手机上物理删除的称重（DATA_CONTRACT 第 11 节）：旧 cursor 继续翻页时它直接缺失。raw 大对象分块固定 version hash，不能下载一半换到新版本。
 
 full measurement 关联项数量过多时给关系续页引用；workout entry 过多时按 entry 排序返回同一 session continuation，不能重复汇总计数。最终 outputSchema 要显式实现 continuation 类型；不能只因为 page.size 没超限就忽略嵌套体积。D1 初版不启用 read replicas，避免新聊天立刻读到旧版本；若启用，须 primary-first/书签语义验证。
 

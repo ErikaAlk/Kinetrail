@@ -11,7 +11,7 @@
 | 配置 | 账户、域名、资源 ID、Access 地址与本人身份标识不进仓库：真实值在本机 `wrangler.local.jsonc`（git 忽略），其余标识记在本机 `ops.local.md`。**本人实例的 wrangler 命令一律加 `-c wrangler.local.jsonc`**，不加就会读到仓库里的占位符 |
 | 账户 | 唯一账户 |
 | 入口 | Workers 自定义域名；`workers_dev`/`preview_urls` 关闭 |
-| D1 | `kinetrail`，已应用 `0001_init.sql`、`0002_session_calories.sql` |
+| D1 | `kinetrail`，已应用 `0001_init.sql`、`0002_session_calories.sql`（`0003_scale_and_purge.sql` 随体脂秤网关上线，见第 11 节） |
 | KV | `kinetrail-OAUTH_KV` |
 | Access for SaaS | 应用 `Kinetrail`，IdP 邮箱验证码，策略“邮箱白名单”，PKCE + client secret |
 | 已设 secrets | `ACCESS_CLIENT_SECRET`、`CURSOR_SIGNING_KEY`、`HC_INGEST_TOKEN_SHA256`，以及留作备用的 `FITDAYS_LOGIN`、`FITDAYS_PASSWORD`、`FITDAYS_REGION`（第 9 节末尾） |
@@ -25,11 +25,11 @@
 
 | 组件 | 内容 | 注意 |
 | --- | --- | --- |
-| Worker `kinetrail` | `/mcp`、OAuth 端点、`/authorize` `/callback` `/consent`、`/healthz`、`/ingest/health-connect`（设备令牌，见第 9 节）、定时调度（DO alarm，cron 备用） | `observability.logs.invocation_logs=false`，不记录请求 URL |
+| Worker `kinetrail` | `/mcp`、OAuth 端点、`/authorize` `/callback` `/consent`、`/healthz`、`/ingest/health-connect`（设备令牌，见第 9 节）、`/app/calendar`（第 10 节）、`/ingest/scale`（网关令牌，第 11 节）、`/app/measurements/delete`（第 12 节）、定时调度（DO alarm，cron 备用） | `observability.logs.invocation_logs=false`，不记录请求 URL |
 | D1 `kinetrail` | 测量 raw 版本与索引、同步批次、训练事件/版本/收据、一次性授权状态、限流计数 | 事实表有禁止删除/改写触发器 |
 | KV `OAUTH_KV` | 仅 OAuth Provider 的 client/grant/token | 不存 FitDays 凭据、不存训练事实 |
-| Secrets | `FITDAYS_LOGIN` `FITDAYS_PASSWORD` `FITDAYS_REGION` `ACCESS_CLIENT_SECRET` `CURSOR_SIGNING_KEY` `HC_INGEST_TOKEN_SHA256` | 只用 `wrangler secret put -c wrangler.local.jsonc`，不写 `.env`/`.dev.vars`、不放命令参数 |
-| Vars（wrangler.jsonc） | `PUBLIC_ORIGIN` `OWNER_ID` `FITDAYS_HISTORY_START` `ACCESS_OIDC_*` `ACCESS_CLIENT_ID` `OWNER_OIDC_SUB` `PROFILE_ALLOWLIST` `PERIODIC_SYNC` `HC_ACCEPT_AFTER` `HC_PROFILE_REF` | 非秘密，但 `OWNER_OIDC_SUB` 是身份标识，仓库若公开请改用 secret |
+| Secrets | `FITDAYS_LOGIN` `FITDAYS_PASSWORD` `FITDAYS_REGION` `ACCESS_CLIENT_SECRET` `CURSOR_SIGNING_KEY` `HC_INGEST_TOKEN_SHA256` `SCALE_INGEST_TOKEN_SHA256` | 只用 `wrangler secret put -c wrangler.local.jsonc`，不写 `.env`/`.dev.vars`、不放命令参数 |
+| Vars（wrangler.jsonc） | `PUBLIC_ORIGIN` `OWNER_ID` `FITDAYS_HISTORY_START` `ACCESS_OIDC_*` `ACCESS_CLIENT_ID` `OWNER_OIDC_SUB` `PROFILE_ALLOWLIST` `PERIODIC_SYNC` `HC_ACCEPT_AFTER` `HC_PROFILE_REF` `HC_HEIGHT_CM` `SCALE_ACCEPT_AFTER` `SCALE_WEIGHT_WINDOW_KG` | 非秘密，但 `OWNER_OIDC_SUB` 是身份标识，仓库若公开请改用 secret |
 
 对 FitDays 只调用 `/api/users/login` 与 `/api/sync/syncFromServer`，没有任何写入或删除路径。
 
@@ -192,7 +192,9 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT dataset, path, valu
 
 ## 5. 备份与恢复
 
-D1 Time Travel 只能回到近期时间点（免费 7 天、付费 30 天），不是独立备份。独立备份用加密导出：
+D1 Time Travel 只能回到近期时间点（免费 7 天、付费 30 天），不是独立备份。
+
+⚠ 手机上物理删除的称重（第 12 节）在删除之前的备份和 Time Travel 时间点里还在。恢复到这样的时间点会把它们带回来：恢复后先跑 `scripts/verify-restore.sql`，再对照线上最新的 `deleted_measurements`（只有来源键的哈希）找出恢复库里哈希命中的 `hc:`/`ble:` 记录，按第 12 节的事务重新删掉，然后才能让恢复库接手。独立备份用加密导出：
 
 ```bash
 # 生成一次加密密钥对（解密私钥离线保存，不要放进仓库、Worker 或备份机）
@@ -232,7 +234,8 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | `CURSOR_SIGNING_KEY` | `wrangler secret put CURSOR_SIGNING_KEY -c wrangler.local.jsonc` | 已发出的分页游标全部变为 `CURSOR_INVALID`，从第一页重查即可 |
 | MCP OAuth token | 需要全部失效时，撤销该用户的 grant（Provider helper `revokeGrant`），或清空 `OAUTH_KV` 中 `grant:`/`token:` 前缀 | ChatGPT 需要重新连接 |
 | 备份密钥 | 生成新密钥对，之后的备份用新公钥；旧私钥保留到最后一份旧备份过期 | 旧备份只能用旧私钥解密 |
-| Health Connect 推送令牌 | 按第 9 节重新生成：写入新哈希 → 手机上保存新令牌 | 旧令牌立即失效；手机保存新令牌前的同步返回 401，token 不前进，不丢数据 |
+| Health Connect 推送令牌 | 按第 9 节重新生成：写入新哈希 → 手机上保存新令牌 | 旧令牌立即失效；手机保存新令牌前的同步返回 401，token 不前进，不丢数据。这个令牌也能读日历、物理删除称重 |
+| 体脂秤网关令牌 | 按 `gateway/README.md` 第 4 步重新生成：写入新哈希 → 改网关主机上的 `/etc/kinetrail-gateway.env` → `systemctl restart kinetrail-gateway` | 旧令牌立即失效；期间的称重留在网关队列里，换好后重推 |
 
 ## 7. 故障排查
 
@@ -318,6 +321,36 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 - 上线顺序：先 `npx wrangler d1 migrations apply kinetrail --remote -c wrangler.local.jsonc`（`0002_session_calories.sql` 加 `workout_sessions.calories_kcal`），再 `npx wrangler deploy -c wrangler.local.jsonc`，最后装 0.4.0 的 APK。旧 Worker 会让日历页报 404，旧 APK 不受新字段影响。
 - 令牌泄漏的处置不变，但影响范围更大了：这个令牌现在既能写 HC 体重，也能读出全部体测与训练事实。按第 6 节轮换后，手机上要重新保存令牌。手机还会把看过的月份原样存在 App 的缓存目录里，丢手机时这部分只靠手机锁屏和应用沙箱保护，卸载 App 或清除数据即删除。
 - 排查：Observability 里筛 `event:"calendar"`，只有 `status`、`count`、`duration_ms`、错误码，不记日期、数值和令牌。
+
+## 11. 体脂秤网关
+
+上秤不用手机：常驻主机上的网关经 BLE 读沃莱 P3、按 WLA37 算体成分，推到 `POST /ingest/scale`。部署、配置和排查全在 [`gateway/README.md`](../gateway/README.md)，服务端规则见 DATA_CONTRACT 第 10 节。
+
+| 配置 | 位置 | 说明 |
+| --- | --- | --- |
+| `SCALE_INGEST_TOKEN_SHA256` | secret | 网关令牌的 SHA-256；未设置时入口返回 404 |
+| `SCALE_ACCEPT_AFTER` | vars | 网关接手的时刻。之后的称重只收网关，Health Connect 只收这之前的（`HC_AFTER_CUTOVER`）；空 = 入口未启用 |
+| `SCALE_WEIGHT_WINDOW_KG` | vars | 与本人近 14 天体重中位数相差超过它的称重整条不收，默认 4 |
+
+**上线顺序**：`npx wrangler d1 migrations apply kinetrail --remote -c wrangler.local.jsonc`（0003：删除授权表、墓碑表、改两个触发器）→ 写 `SCALE_INGEST_TOKEN_SHA256` → 在 `wrangler.local.jsonc` 设 `SCALE_ACCEPT_AFTER` → `npx wrangler deploy -c wrangler.local.jsonc` → 网关主机按 `gateway/README.md` 装好并启动 → 装 0.8.0 的 APK。旧 Worker 没有网关入口（网关队列会一直 404 重试），旧 APK 看不到删除按钮。
+
+**日常**：光脚站上秤、手握手柄，等秤屏出结果。网关日志 `journalctl -u kinetrail-gateway -f` 里出现 `pushed 1: accepted=1` 就进库了，打开「身迹」的记录页能看到。秤屏上的体成分几格是 `--`（没有 App 连着喂心跳），读数以 Kinetrail 为准。
+
+**检查**（只看结构与计数）：
+
+```bash
+npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_json, error_code, created_at FROM sync_batches WHERE source_region = 'ble' ORDER BY created_at DESC LIMIT 5" -c wrangler.local.jsonc
+```
+
+## 12. 删除称重
+
+手机「记录」页选中日期，称重卡片底部「删除这次称重」→ 确认。服务端在 lease 内把这条记录的全部版本和分块物理删除，只留一条不含读数的墓碑（来源键的哈希），手机重读 Health Connect 或网关重发都不会把它写回来。规则见 DATA_CONTRACT 第 11 节。
+
+- 能删的只有 Health Connect 推送和网关来的称重；2026-09-15 以前 FitDays 同步的旧记录没有删除按钮。
+- 删除不可撤销。删除前的加密备份和 D1 Time Travel 里仍有这条记录，要等保留期过去；恢复这类备份的注意事项见第 5 节。
+- 删错了的补救：Health Connect 来源的原记录还在手机上，但墓碑会挡住它，要恢复只能从备份里取回后手工处理；网关来源的只能从备份取回。
+- 令牌泄漏时对方也能删，限流是全局每分钟 10 条。发现异常先按第 6 节轮换手机令牌。
+- 排查：Observability 里筛 `event:"delete"`，只有 `status`（`deleted`/`not_found`/`not_deletable`/`busy`）和耗时，不记 ID 与数值。
 
 ## 验证记录
 

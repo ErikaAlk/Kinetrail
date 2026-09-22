@@ -1,0 +1,24 @@
+[Unit]
+Description=Kinetrail 体脂秤网关（沃莱 P3 经 BLE 推送到 Kinetrail）
+Wants=bluetooth.service network-online.target
+After=bluetooth.service network-online.target
+
+[Service]
+# 令牌、秤地址、身高、出生日期都在这份文件里（root 600，systemd 以 root 读取后再降权启动）
+EnvironmentFile=/etc/kinetrail-gateway.env
+Environment=KT_QUEUE=/var/lib/kinetrail-gateway/queue.json
+ExecStart=/usr/bin/python3 /opt/kinetrail-gateway/gateway.py
+# BlueZ 的 D-Bus 策略默认放行所有用户，不需要 root 或 bluetooth 组
+DynamicUser=yes
+StateDirectory=kinetrail-gateway
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

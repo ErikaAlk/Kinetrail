@@ -2,7 +2,7 @@
 
 读取手机上 FitDays+ 写入 Health Connect 的体测，推送到 Kinetrail 的 `POST /ingest/health-connect`；也能识别 FitDays+ 的人体成分分析报告图片，把 HC 里没有的读数挂到同一次称重上；还有一个从服务端读数据的训练日历。设计、实测与服务端规则见 [`research/HEALTHCONNECT.md`](../research/HEALTHCONNECT.md)（报告见第 6 节），日历的服务端规则见 [`DATA_CONTRACT.md`](../DATA_CONTRACT.md) 第 9 节，令牌与运维见 [`docs/operations.md`](../docs/operations.md) 第 9、10 节。
 
-当前版本 0.7.0：Compose 界面与启动图标；底栏三个一级页面（记录 / 同步 / 设置）；打开 App 时自动同步一次（需已保存令牌且 7 项读取权限齐全），另有“立即同步”；识图报告；训练日历；设置里可选默认首页和体测报告版式。没有后台任务。
+当前版本 0.8.0：Compose 界面与启动图标；底栏三个一级页面（记录 / 同步 / 设置）；打开 App 时自动同步一次（需已保存令牌且 7 项读取权限齐全），另有“立即同步”；识图报告；训练日历；记录页的称重卡片可以永久删除这次称重（Health Connect 与体脂秤网关来的，旧 FitDays 记录不能删；规则见 `DATA_CONTRACT.md` 第 11 节）；设置里可选默认首页和体测报告版式。没有后台任务。
 
 ## 同步
 
