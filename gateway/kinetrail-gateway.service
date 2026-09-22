@@ -8,9 +8,13 @@ After=bluetooth.service network-online.target
 EnvironmentFile=/etc/kinetrail-gateway.env
 Environment=KT_QUEUE=/var/lib/kinetrail-gateway/queue.json
 ExecStart=/usr/bin/python3 /opt/kinetrail-gateway/gateway.py
-# BlueZ 的 D-Bus 策略默认放行所有用户，不需要 root 或 bluetooth 组
-DynamicUser=yes
+# 专用系统用户（部署时 useradd 建好）。BlueZ 的 D-Bus 策略默认放行所有用户，不需要 root 或 bluetooth 组。
+# 不用 DynamicUser：Armbian 的 nsswitch 没有 systemd 模块，动态 uid 解析不了，dbus-daemon 会在握手时断开。
+User=kinetrail-gw
+Group=kinetrail-gw
 StateDirectory=kinetrail-gateway
+# 队列里可能有室友的体重，目录只给服务用户
+StateDirectoryMode=0700
 Restart=always
 RestartSec=10
 NoNewPrivileges=yes
