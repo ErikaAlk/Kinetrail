@@ -107,8 +107,9 @@ class Queue:
         self.items.append(item)
         self.save()
 
-    def drop(self, time_ms_values: set[int]) -> None:
-        self.items = [i for i in self.items if i["time_ms"] not in time_ms_values]
+    def drop_first(self, count: int) -> None:
+        # 按位置删刚发出去的那一批：不同称重可能同一毫秒（时钟回拨），按时间删会连没发的一起删掉
+        self.items = self.items[count:]
         self.save()
 
 
@@ -148,11 +149,12 @@ def flush(queue: Queue, origin: str, token: str) -> None:
         else:
             log.warning("push failed: HTTP %d %s, %d pending", status, result.get("error", ""), len(queue.items))
             return
-        queue.drop({i["time_ms"] for i in batch})
+        queue.drop_first(len(batch))
 
 
-async def read_result(device) -> bytes | None:
-    """连秤、订阅，等到一帧 A7 就断开。其他帧只记类型和长度，给以后查协议用。"""
+async def read_result(device, known: set[str]) -> bytes | None:
+    """连秤、订阅，等到一帧没见过的 A7 就断开。见过的（秤重发的旧结果）跳过接着等，免得拿着旧帧断开、漏掉新称重。
+    其他帧只记类型和长度，给以后查协议用。"""
     from bleak import BleakClient
 
     loop = asyncio.get_running_loop()
@@ -164,7 +166,9 @@ async def read_result(device) -> bytes | None:
         if payload is None:
             seen[f"bad/{len(data)}"] = seen.get(f"bad/{len(data)}", 0) + 1
         elif payload[0] == decode.TYPE_RESULT:
-            if not result.done():
+            if payload.hex() in known:
+                seen["a7/repeat"] = seen.get("a7/repeat", 0) + 1
+            elif not result.done():
                 result.set_result(payload)
         elif payload[0] != decode.TYPE_WEIGHT:
             key = f"{payload[0]:02x}/{len(payload)}"
@@ -201,7 +205,7 @@ async def run() -> None:
         if device is None:
             continue
         try:
-            payload = await read_result(device)
+            payload = await read_result(device, set(recent))
         except Exception as e:  # 秤走开、连接中断、BlueZ 报错：都等下一次上秤
             log.warning("read failed: %s", type(e).__name__)
             await asyncio.sleep(5)
@@ -211,8 +215,6 @@ async def run() -> None:
             continue
         now = time.time()
         recent = {k: t for k, t in recent.items() if now - t < REPEAT_WINDOW_S}
-        if payload.hex() in recent:
-            continue
         recent[payload.hex()] = now
         item = measurement(payload, int(now * 1000), height, birth, sex)
         if item is None:
@@ -220,8 +222,8 @@ async def run() -> None:
             continue
         queue.add(item)
         log.info("measured, %d pending", len(queue.items))
-        # 秤出结果后还会亮一阵、继续广播；歇一会儿再扫，免得反复连它
-        await asyncio.sleep(30)
+        # 秤出结果后还会亮一阵、继续广播；歇一会儿再扫，免得反复连它（BlueZ 在设备停播约 30 秒后才从缓存里清掉）
+        await asyncio.sleep(60)
 
 
 def _self_check() -> None:
@@ -238,16 +240,53 @@ def _self_check() -> None:
     # 阻抗全零（没光脚）：算法门限不过，只剩 BMI
     bare = payload[:11] + bytes(20) + payload[31:]
     assert set(measurement(bare, 1789948800000, 175, birth, 1)["metrics"]) == {"bmi"}
-    # 队列：写入、改名、按 time_ms 删除
+    # 队列：写入、改名；只删发出去的那几项，同一毫秒的另一次称重留着
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         q = Queue(Path(d) / "q.json")
         q.add(item)
-        q.add({**item, "time_ms": 1})
+        q.add({**item, "a7_hex": bare.hex()})
         assert len(Queue(Path(d) / "q.json").items) == 2
-        q.drop({1})
-        assert [i["time_ms"] for i in Queue(Path(d) / "q.json").items] == [1789948800000]
+        q.drop_first(1)
+        assert [i["a7_hex"] for i in Queue(Path(d) / "q.json").items] == [bare.hex()]
+    # 连接里先来一帧见过的旧结果、再来新结果：拿新的
+    asyncio.run(_check_read_result(payload, bare))
     print("ok")
+
+
+async def _check_read_result(old: bytes, new: bytes) -> None:
+    """用假的 BleakClient 喂两帧：旧帧（已见过）在前，新帧在后。"""
+    import types
+
+    def framed(p: bytes) -> bytes:
+        return bytes([0]) + len(p).to_bytes(2, "big") + bytes([0]) + p + bytes([sum(p) & 0x1F])
+
+    class FakeClient:
+        def __init__(self, _device, timeout):
+            self.callbacks = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def start_notify(self, _uuid, callback):
+            self.callbacks.append(callback)
+            if len(self.callbacks) == 2:
+                loop = asyncio.get_running_loop()
+                loop.call_soon(callback, None, bytearray(framed(old)))
+                loop.call_later(0.01, callback, None, bytearray(framed(new)))
+
+    real = sys.modules.get("bleak")
+    sys.modules["bleak"] = types.SimpleNamespace(BleakClient=FakeClient)
+    try:
+        assert await read_result(None, {old.hex()}) == new
+    finally:
+        if real is None:
+            del sys.modules["bleak"]
+        else:
+            sys.modules["bleak"] = real
 
 
 if __name__ == "__main__":

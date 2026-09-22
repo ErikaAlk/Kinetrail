@@ -128,6 +128,43 @@ describe('物理删除称重', () => {
     expect((await leftovers(owner)).records).toBe(1)
   })
 
+  it('分块存储的大记录：已发布与未发布版本的分块一起删掉', async () => {
+    const owner = crypto.randomUUID()
+    const id = crypto.randomUUID()
+    const versions = [crypto.randomUUID(), crypto.randomUUID()]
+    const version = (vid: string, published: number, stage: number) =>
+      env.DB.prepare(
+        `INSERT INTO raw_record_versions (id, raw_record_id, owner_id, dataset, profile_ref, batch_id, generation,
+           stage_index, published, raw_hash, byte_length, raw_format_version, sanitizer_version, raw_json, chunk_count,
+           measured_at, is_deleted, formula_version, normalization_version, created_at)
+         VALUES (?1, ?2, ?3, 'weight', ?4, 'b', 1, ?5, ?6, 'h', 4, 1, 1, NULL, 2, 1, 0, 'body_v1', '1', 0)`,
+      ).bind(vid, id, owner, PROFILE, stage, published)
+    const chunk = (vid: string, index: number) =>
+      env.DB.prepare(
+        'INSERT INTO raw_chunks (version_id, chunk_index, data, chunk_hash) VALUES (?, ?, ?, ?)',
+      ).bind(vid, index, new Uint8Array([123, 125]), 'c')
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO raw_records (id, owner_id, dataset, profile_ref, source_record_id, identity_kind, first_seen_at, last_seen_at)
+         VALUES (?, ?, 'weight', ?, 'ble:p3:0123456789abcdef0123456789abcdef', 'content_hash', 0, 0)`,
+      ).bind(id, owner, PROFILE),
+      version(versions[0] as string, 1, 0),
+      version(versions[1] as string, 0, 1),
+      chunk(versions[0] as string, 0),
+      chunk(versions[0] as string, 1),
+      chunk(versions[1] as string, 0),
+      chunk(versions[1] as string, 1),
+    ])
+    expect(await deleteMeasurement(env.DB, owner, PROFILE, id, c.now())).toBe('deleted')
+    const left = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM raw_chunks WHERE version_id IN (SELECT value FROM json_each(?))',
+    )
+      .bind(JSON.stringify(versions))
+      .first<{ n: number }>()
+    expect(left?.n).toBe(0)
+    expect(await leftovers(owner)).toMatchObject({ records: 0, versions: 0, tombstones: 1 })
+  })
+
   it('旧 FitDays 记录不开放删除；别的成员、不存在的 ID 当作找不到', async () => {
     const owner = crypto.randomUUID()
     const fitdays = crypto.randomUUID()

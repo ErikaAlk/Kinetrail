@@ -152,18 +152,32 @@ class MainActivity : ComponentActivity(), AppActions {
         state.selectedDate = if (state.selectedDate == date) null else date
     }
 
-    /** 物理删除一次称重（界面已经确认过），删完重读这个月；失败的原因显示在日历上。 */
+    /**
+     * 物理删除一次称重（界面已经确认过），删完重读当前月份；失败的原因显示在日历上。
+     * 服务端删成功后先在本机去掉：屏幕上的这条立刻消失，那个月的本机缓存也作废，
+     * 后面的重读失败或离线重启都不会再把删掉的称重显示出来。
+     */
     override fun deleteMeasurement(recordId: String) {
         val token = TokenStore.load(prefs) ?: return
         if (state.deletingRecord != null) return
+        val month = state.month
         state.deletingRecord = recordId
         state.deleteError = null
         lifecycleScope.launch {
             val result = runCatching { postDeleteMeasurement(token, recordId) }
             state.deletingRecord = null
-            result.exceptionOrNull()?.let {
-                state.deleteError = if (it is PushException) it.message else "删除失败：${it.javaClass.simpleName}"
-            }
+            result
+                .onSuccess {
+                    withContext(Dispatchers.IO) { calendarFile(month).delete() }
+                    if (state.calendarLoadedMonth == month) {
+                        state.calendarDays = state.calendarDays.mapValues { (_, day) ->
+                            day.copy(measurements = day.measurements.filterNot { it.recordId == recordId })
+                        }
+                    }
+                }
+                .onFailure {
+                    state.deleteError = if (it is PushException) it.message else "删除失败：${it.javaClass.simpleName}"
+                }
             loadCalendar(state.month)
         }
     }
