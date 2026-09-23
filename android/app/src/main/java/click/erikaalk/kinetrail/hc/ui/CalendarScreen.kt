@@ -92,6 +92,7 @@ import java.time.format.DateTimeFormatter
  *
  * 数据全部来自服务端 `/app/calendar`，与 Health Connect 无关，也不会触发同步。
  * 取回的每个月在本机留一份，刷新期间照常显示那一份（见 MainActivity.loadCalendar）。
+ * 切到这一页、回到前台时静默重读：已有数据时不转圈，转圈只出现在手动刷新、翻月和什么都还没有的时候。
  */
 @Composable
 fun CalendarScreen(state: AppState, actions: AppActions, insets: PageInsets) {
@@ -446,8 +447,8 @@ private fun DayDetail(
             day.sessions.isNotEmpty() -> KtSpacing.Gap.section
             else -> 0.dp
         }
-        // 展开状态跟着这一天的这一次称重走，换了日期不会串到别的记录上
-        key(date, index) {
+        // 展开和删除确认跟着这次称重的 record_id 走：静默刷新插进或去掉别的称重，确认框也不会换成另一条
+        key(date, measurement.recordId ?: index) {
             MeasurementCard(
                 measurement,
                 deleting = measurement.recordId != null && measurement.recordId == deletingRecord,

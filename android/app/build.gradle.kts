@@ -23,8 +23,8 @@ android {
         // 只给本人手机（Android 16）用；34 起 HC 是系统模块，不用处理独立 HC App 的分支。
         minSdk = 34
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.8.0"
+        versionCode = 9
+        versionName = "0.8.1"
         // 本人手机是 arm64；x86_64 留给模拟器验证识图。ML Kit 中文识别模型按 ABI 打包，不留其他架构。
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         buildConfigField("String", "KINETRAIL_ORIGIN", "\"$kinetrailOrigin\"")

@@ -1,4 +1,5 @@
 // 打开即同步：有令牌、权限齐全时 onStart 自动推送一次；V1 没有后台任务（research/HEALTHCONNECT.md 2.3）。
+// 记录页：每次切过来、在记录页回到前台都静默重读当前月份（refreshRecords）。
 // 报告识图：相册选图或从 FitDays+ 分享进来 → 本机 OCR → 核对页 → 先同步再上传（报告只能挂到已入库的称重上）。
 
 package click.erikaalk.kinetrail.hc
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity(), AppActions {
     private var running: Job? = null
     private var reportAttempt = 0
     private var calendarAttempt = 0
+    private var calendarJob: Job? = null
 
     private val requestPermissions =
         registerForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
@@ -93,6 +95,7 @@ class MainActivity : ComponentActivity(), AppActions {
             // 自动同步不弹权限页：用户拒绝后回到前台会再次 onStart，弹窗会形成循环。
             if (state.tokenSaved && state.grantedPermissions == permissions.size) sync()
         }
+        refreshRecords()
     }
 
     private fun handleShare(intent: Intent?) {
@@ -105,9 +108,16 @@ class MainActivity : ComponentActivity(), AppActions {
 
     override fun navigate(screen: Screen) {
         state.screen = screen
-        // 记录页：当月还没有可用数据（冷启动后首次进入、上次失败且本机没有这个月）才发请求；
-        // 已经有就原样保留，连同上次选中的日期，要新数据点月份旁的刷新。
-        if (screen == Screen.Records && state.calendarLoadedMonth != state.month) showMonth(state.month)
+        refreshRecords()
+    }
+
+    /**
+     * 切到记录页（含点底栏上已经选中的记录）、在记录页回到前台时，静默重读屏幕上这个月。
+     * 选中的日期、展开的卡片、正在弹的删除确认都不动；已经在读或正在删除时不另发（删完自己会重读）。
+     */
+    private fun refreshRecords() {
+        if (state.screen != Screen.Records || calendarJob?.isActive == true || state.deletingRecord != null) return
+        loadCalendar(state.month, silent = true)
     }
 
     override fun setHomeScreen(screen: Screen) {
@@ -186,13 +196,18 @@ class MainActivity : ComponentActivity(), AppActions {
      * 只读服务端日历。屏幕上已经是这个月时，刷新期间照常显示，取回来再整体替换；
      * 换到别的月份（含冷启动）先摆出上次存在本机的那份。失败时本机那份留着。
      * 晚回来的旧请求不覆盖新结果（同 [openReport] 的做法）。
+     *
+     * [silent]：屏幕上有这个月的数据（含刚摆出的本机那份）时不转圈、不先收起错误提示，
+     * 页面不跳动，结果回来再一起换；什么都没有时和手动刷新一样显示读取中。
      */
-    private fun loadCalendar(month: YearMonth) {
+    private fun loadCalendar(month: YearMonth, silent: Boolean = false) {
         val attempt = ++calendarAttempt
         val token = TokenStore.load(prefs)
-        state.calendarLoading = token != null
-        state.calendarError = if (token == null) "保存推送令牌后才能读取日历" else null
-        lifecycleScope.launch {
+        if (!silent || token == null) {
+            state.calendarLoading = token != null
+            state.calendarError = if (token == null) "保存推送令牌后才能读取日历" else null
+        }
+        calendarJob = lifecycleScope.launch {
             if (state.calendarLoadedMonth != month) {
                 val cached = withContext(Dispatchers.IO) {
                     runCatching { parseCalendar(calendarFile(month).readText()) }.getOrNull()
@@ -201,11 +216,16 @@ class MainActivity : ComponentActivity(), AppActions {
                 showCalendar(month, cached)
             }
             if (token == null) return@launch
+            if (silent && state.calendarLoadedMonth != month) {
+                state.calendarLoading = true
+                state.calendarError = null
+            }
             val result = runCatching { fetchCalendar(token, month) }
             if (attempt != calendarAttempt) return@launch
             state.calendarLoading = false
             result
                 .onSuccess { (json, range) ->
+                    state.calendarError = null
                     showCalendar(month, range)
                     // 先写临时文件再改名，写到一半被杀也不会留下半份
                     withContext(Dispatchers.IO) {
@@ -215,6 +235,9 @@ class MainActivity : ComponentActivity(), AppActions {
                     }
                 }
                 .onFailure {
+                    // 静默刷新失败、屏幕上已有这个月的数据时不插提示条：切一次页就把卡片往下推一截，
+                    // 正要点删除的会点偏。离线时照常看上次的，手动刷新失败才说
+                    if (silent && state.calendarLoadedMonth == month) return@onFailure
                     state.calendarError =
                         if (it is PushException) it.message else "读取失败：${it.javaClass.simpleName}"
                 }
