@@ -235,6 +235,9 @@ class MainActivity : ComponentActivity(), AppActions {
                     }
                 }
                 .onFailure {
+                    // 静默刷新失败、屏幕上已有这个月的数据时不插提示条：切一次页就把卡片往下推一截，
+                    // 正要点删除的会点偏。离线时照常看上次的，手动刷新失败才说
+                    if (silent && state.calendarLoadedMonth == month) return@onFailure
                     state.calendarError =
                         if (it is PushException) it.message else "读取失败：${it.javaClass.simpleName}"
                 }
