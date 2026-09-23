@@ -67,7 +67,8 @@ class AppState {
 
     /** 日历：一次显示一个月，数据来自服务端，与 Health Connect 同步互不影响。 */
     var month by mutableStateOf<YearMonth>(YearMonth.now())
-    var selectedDate by mutableStateOf<LocalDate?>(null)
+    /** 打开 App 默认选中今天；之后切页、静默刷新都不改它。 */
+    var selectedDate by mutableStateOf<LocalDate?>(LocalDate.now())
     var calendarDays by mutableStateOf<Map<LocalDate, CalendarDay>>(emptyMap())
     /** 已经取回来的是哪个月；为 null 表示当前这个月还没有可用数据。 */
     var calendarLoadedMonth by mutableStateOf<YearMonth?>(null)
