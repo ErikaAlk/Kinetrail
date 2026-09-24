@@ -1,0 +1,10 @@
+{
+  "domain": "kinetrail_gateway",
+  "name": "Kinetrail 体脂秤网关",
+  "codeowners": [],
+  "dependencies": ["bluetooth"],
+  "documentation": "https://github.com/ErikaAlk/Kinetrail/tree/main/gateway",
+  "iot_class": "cloud_push",
+  "requirements": [],
+  "version": "1.0.0"
+}
