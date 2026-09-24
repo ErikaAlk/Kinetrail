@@ -1,6 +1,6 @@
 # CLAUDE.md — Kinetrail
 
-个人体测（2026-09-22 起由 T6 上的体脂秤网关经 BLE 推送，之前是手机经 Health Connect 推送、更早是 FitDays 只读拉取）与训练事实的远程 MCP 服务器。Cloudflare Worker + D1 + OAuth Provider(KV) + Access OIDC。契约以 `ARCHITECTURE_DECISION.md`、`DATA_CONTRACT.md`、`MCP_CONTRACT.md` 为准；Health Connect 方案与实测见 `research/HEALTHCONNECT.md`；手机端在 `android/`；体脂秤网关在 `gateway/`（部署步骤在它的 README）；运维见 `docs/operations.md`；适配小米体脂秤 S800 的步骤见 `docs/xiaomi-s800.md`。
+个人体测（2026-09-22 起由体脂秤网关经 BLE 推送，2026-09-24 起网关跑在 T6 上的 HAOS 虚拟机里（HA 自定义集成），之前是手机经 Health Connect 推送、更早是 FitDays 只读拉取）与训练事实的远程 MCP 服务器。Cloudflare Worker + D1 + OAuth Provider(KV) + Access OIDC。契约以 `ARCHITECTURE_DECISION.md`、`DATA_CONTRACT.md`、`MCP_CONTRACT.md` 为准；Health Connect 方案与实测见 `research/HEALTHCONNECT.md`；手机端在 `android/`；体脂秤网关在 `gateway/`（部署步骤在它的 README）；运维见 `docs/operations.md`；适配小米体脂秤 S800 的步骤见 `docs/xiaomi-s800.md`。
 
 ## 命令
 
@@ -42,6 +42,7 @@
 - ML Kit 在报告的衬线字体上会读错形近字（体→休、控→挖、肉→內、龄→齡、级→級、成→咸、率→奉/牽、抗→坑）、多认一个字（「肌肉均衡」→「肌肉內均衝」）、读错符号（`|`、`%`→`96`、`/1`→`1`、`0`→`o`），还会丢小数点（「157.7%」→「1577%」）或把小数点读成逗号（「45.9」→「45,9」，2026-09-18 真机实测）。同一份报告每天错的地方都不一样，两处叠加（「內脏脂肪等級」「身体休年齡」，2026-09-19 实测）就超出一处容错，所以形近字按组归一（`ReportParser.kt` 的 `CONFUSABLE`）再比编辑距离，别再逐次往表里补一个误读。容错阈值只能是 1：「分段脂肪分析」与「肌肉脂肪分析」只差两个字。数字之间的逗号在 `normalize` 换回小数点（否则只截到前半段，再按丢小数点还原会差十倍），数字按报告固定小数位还原（`ICERUnitConfig.o()` 保证质量/比例/阻抗一位小数、表里体重两位）。改解析前先看两份真实读法：`mlkit-replica-ocr.json`（模拟器 + 近似图）与 `mlkit-real-report-ocr.json`（真机 + FitDays+ 原图）。
 - 用 `adb shell am start -a android.intent.action.SEND --eu android.intent.extra.STREAM content://media/...` 模拟分享会因 shell 没有媒体授权报 SecurityException，验证识图改走 App 里的相册选图。Git Bash 里的 adb 路径参数要加 `MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 会被改写成 Windows 路径。
 - Kotlin KDoc 里写 `values*/` 这类含 `*/` 的路径会提前结束注释，编译报一串 “Expecting a top level declaration”。
+- 本人实例的网关 2026-09-24 起是 HA 集成（`gateway/homeassistant/`，部署在 HAOS 的 `/config/custom_components/kinetrail_gateway/`），T6 宿主上的 systemd 服务已停用、适配器直通给了 HAOS。称重没进来先看 `ha core logs | grep gateway`。HA 的 bleak 包装类 `find_device_by_address` 不等 timeout、立刻返回，网关里没找到设备时那 1 秒 sleep 别删，删了会卡死 HA 的事件循环。
 - T6 的 USB 蓝牙适配器是 RTL8761BU，`armbian-firmware` 里没有它的固件，而 Debian 的 `firmware-realtek` 与 `armbian-firmware` 互相冲突，直接 `apt install` 会卸掉整包 Armbian 固件。只从 Debian 包里取两个 `rtl8761bu_*.bin`（`gateway/README.md` 第 1 步）。用户住宿舍，身边只有 T6；香橙派在家里，连不到是正常的。
 - 宿舍网络给 T6 发了 IPv6 默认路由，但 IPv6 实际不通（`curl -6` 超时、`curl -4` 秒回）。curl 会自动退回 IPv4，Python urllib 不会：它按解析顺序逐个地址等满超时，网关推送因此晚过一分钟，现在网关自己先连 IPv4（`connect_ipv4_first`）。
 - T6 上的 systemd 服务别用 `DynamicUser`：Armbian 的 nsswitch 没有 `systemd` 模块，动态 uid 解析不了，连系统 D-Bus 会在握手时断开（dbus_fast `EOFError`）。网关用 `useradd` 建的 `kinetrail-gw`。
