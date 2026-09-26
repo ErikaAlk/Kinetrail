@@ -56,7 +56,7 @@ Health Connect 里只有体重、体脂率、骨量、基础代谢这些基础�
 
 ## 手机 App
 
-「身迹」在 [`android/`](android/)，Kotlin + Jetpack Compose。底栏三页：记录（训练日历，称重卡片可以永久删除这次称重）、同步（Health Connect 读取与报告识图）、设置。
+「身迹」在 [`android/`](android/)，Kotlin + Jetpack Compose，界面用 ColorOS 17 设计库。底栏三页：记录（训练日历，点开称重卡片可以永久删除这次称重）、同步（Health Connect 读取与报告识图）、设置。
 
 打开 App 自动同步一次。在 FitDays+ 报告页点分享选「身迹」或从相册选图，进入识图核对。推送令牌在电脑上生成、用 adb 写入手机，服务端只存它的 SHA-256。没有后台任务，称完打开一次就行。
 
@@ -64,11 +64,11 @@ Health Connect 里只有体重、体脂率、骨量、基础代谢这些基础�
 
 <table>
 <tr>
-<td><img src="docs/images/app-calendar.png" width="260" alt="训练日历：2026 年 9 月，日期下标出训练和称重，选中 15 日显示训练卡"></td>
-<td><img src="docs/images/app-sets.png" width="260" alt="训练卡展开动作后的逐组表格"></td>
+<td><img src="docs/images/app-calendar.png" width="260" alt="训练日历：2026 年 9 月，日期下标出训练和称重，选中 14 日显示训练卡和称重卡"></td>
+<td><img src="docs/images/app-sets.png" width="260" alt="点开训练卡弹出的面板，每个动作一张逐组表格"></td>
 </tr>
 <tr>
-<td><img src="docs/images/app-metrics.png" width="260" alt="称重卡展开指标后的分组体测数据"></td>
+<td><img src="docs/images/app-metrics.png" width="260" alt="点开称重卡弹出的面板，分组列出全部体测指标"></td>
 <td><img src="docs/images/app-report.png" width="260" alt="识图核对页，列出识别到的每一项"></td>
 </tr>
 </table>
