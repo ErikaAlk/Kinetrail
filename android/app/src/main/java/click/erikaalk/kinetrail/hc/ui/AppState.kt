@@ -78,6 +78,11 @@ class AppState {
 
     /** 正在删除的那次称重（服务端的 record_id）；同一时刻只删一条。 */
     var deletingRecord by mutableStateOf<String?>(null)
+    /**
+     * 上一次删除失败：record_id 和原因。写在那次称重的详情面板里——面板是独立窗口，Snackbar 会被它挡住。
+     * 再删一次或关掉面板时清掉。
+     */
+    var deleteFailure by mutableStateOf<Pair<String, String>?>(null)
 
     /** 应用级提示（设计库 Snackbar）：刷新、删除失败这类不占页面位置的结果。 */
     val snackbar = CoSnackBarState()

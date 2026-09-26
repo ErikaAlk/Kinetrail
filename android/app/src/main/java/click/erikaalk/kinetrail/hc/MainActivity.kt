@@ -163,7 +163,7 @@ class MainActivity : ComponentActivity(), AppActions {
     }
 
     /**
-     * 物理删除一次称重（界面已经确认过），删完重读当前月份；失败的原因用 Snackbar 说。
+     * 物理删除一次称重（界面已经确认过），删完重读当前月份；失败的原因写在那次称重的详情面板里。
      * 服务端删成功后先在本机去掉：屏幕上的这条立刻消失，那个月的本机缓存也作废，
      * 后面的重读失败或离线重启都不会再把删掉的称重显示出来。
      */
@@ -172,6 +172,7 @@ class MainActivity : ComponentActivity(), AppActions {
         if (state.deletingRecord != null) return
         val month = state.month
         state.deletingRecord = recordId
+        state.deleteFailure = null
         lifecycleScope.launch {
             val result = runCatching { postDeleteMeasurement(token, recordId) }
             state.deletingRecord = null
@@ -184,7 +185,7 @@ class MainActivity : ComponentActivity(), AppActions {
                         }
                     }
                 }
-                .onFailure { toast(it.userMessage("删除")) }
+                .onFailure { state.deleteFailure = recordId to it.userMessage("删除") }
             loadCalendar(state.month)
         }
     }

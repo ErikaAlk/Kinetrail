@@ -160,8 +160,12 @@ fun CalendarScreen(state: AppState, actions: AppActions) {
             else MeasurementSheet(
                 measurement,
                 deleting = measurement.recordId != null && measurement.recordId == state.deletingRecord,
+                failure = state.deleteFailure?.takeIf { it.first == measurement.recordId }?.second,
                 onDelete = measurement.recordId?.takeIf { measurement.deletable }?.let { id -> { actions.deleteMeasurement(id) } },
-                onDismiss = { detail = null },
+                onDismiss = {
+                    detail = null
+                    state.deleteFailure = null
+                },
             )
         }
         null -> Unit
@@ -556,7 +560,13 @@ private fun SetTableView(table: SetTable) {
  * [onDelete] 不为空时最下面是删除，先弹确认；室友上秤被当成本人记进来时靠它删掉。
  */
 @Composable
-private fun MeasurementSheet(measurement: BodyMeasurement, deleting: Boolean, onDelete: (() -> Unit)?, onDismiss: () -> Unit) {
+private fun MeasurementSheet(
+    measurement: BodyMeasurement,
+    deleting: Boolean,
+    failure: String?,
+    onDelete: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
     var confirming by remember { mutableStateOf(false) }
     val groups = metricGroups(measurement.metrics)
     val weight = measurement.metrics["weight_kg"]?.let { MetricRow("体重", Reading(num(it), "kg")) }
@@ -579,10 +589,19 @@ private fun MeasurementSheet(measurement: BodyMeasurement, deleting: Boolean, on
             }
             if (hasBiaMetrics(measurement.metrics)) Footer("BIA 数值适合看趋势，不是医疗诊断")
             if (onDelete != null) {
+                // 删除失败写在按钮上方（DESIGN §11.2：原位写原因和补救），按钮照常可以再点
+                failure?.let {
+                    BasicText(
+                        it,
+                        Modifier.fillMaxWidth().padding(horizontal = L.categoryIndent).padding(top = L.groupTop * 2),
+                        style = L.summary.text(C.label2.current).copy(textAlign = TextAlign.Center),
+                    )
+                }
                 CoButton(
                     if (deleting) "正在删除…" else "删除",
                     onClick = { confirming = true },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = L.categoryIndent).padding(top = L.groupTop * 2),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = L.categoryIndent)
+                        .padding(top = if (failure == null) L.groupTop * 2 else L.categoryMarginV),
                     type = CoButtonType.Secondary,
                     enabled = !deleting,
                     textColor = C.error.current,
