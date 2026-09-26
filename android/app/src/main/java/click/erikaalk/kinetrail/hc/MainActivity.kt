@@ -36,6 +36,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
+import java.net.SocketTimeoutException
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
@@ -138,7 +140,6 @@ class MainActivity : ComponentActivity(), AppActions {
         if (token.length < 32) return false
         TokenStore.save(prefs, token)
         state.tokenSaved = true
-        state.screen = Screen.Settings
         if (state.grantedPermissions == permissions.size) sync() else if (state.grantedPermissions != null) requestPermissions()
         return true
     }
@@ -153,7 +154,6 @@ class MainActivity : ComponentActivity(), AppActions {
         if (month != state.month || state.selectedDate == null) {
             state.selectedDate = LocalDate.now().takeIf { YearMonth.from(it) == month }
         }
-        state.deleteError = null
         state.month = month
         loadCalendar(month)
     }
@@ -163,7 +163,7 @@ class MainActivity : ComponentActivity(), AppActions {
     }
 
     /**
-     * 物理删除一次称重（界面已经确认过），删完重读当前月份；失败的原因显示在日历上。
+     * 物理删除一次称重（界面已经确认过），删完重读当前月份；失败的原因写在那次称重的详情面板里。
      * 服务端删成功后先在本机去掉：屏幕上的这条立刻消失，那个月的本机缓存也作废，
      * 后面的重读失败或离线重启都不会再把删掉的称重显示出来。
      */
@@ -172,7 +172,7 @@ class MainActivity : ComponentActivity(), AppActions {
         if (state.deletingRecord != null) return
         val month = state.month
         state.deletingRecord = recordId
-        state.deleteError = null
+        state.deleteFailure = null
         lifecycleScope.launch {
             val result = runCatching { postDeleteMeasurement(token, recordId) }
             state.deletingRecord = null
@@ -185,9 +185,7 @@ class MainActivity : ComponentActivity(), AppActions {
                         }
                     }
                 }
-                .onFailure {
-                    state.deleteError = if (it is PushException) it.message else "删除失败：${it.javaClass.simpleName}"
-                }
+                .onFailure { state.deleteFailure = recordId to it.userMessage("删除") }
             loadCalendar(state.month)
         }
     }
@@ -235,11 +233,13 @@ class MainActivity : ComponentActivity(), AppActions {
                     }
                 }
                 .onFailure {
-                    // 静默刷新失败、屏幕上已有这个月的数据时不插提示条：切一次页就把卡片往下推一截，
-                    // 正要点删除的会点偏。离线时照常看上次的，手动刷新失败才说
-                    if (silent && state.calendarLoadedMonth == month) return@onFailure
-                    state.calendarError =
-                        if (it is PushException) it.message else "读取失败：${it.javaClass.simpleName}"
+                    // 屏幕上已有这个月的数据时照常显示：静默刷新失败不打扰（离线时照常看上次的），
+                    // 手动刷新失败用 Snackbar 说一声，不占页面位置、不把卡片往下推
+                    val message = it.userMessage("读取")
+                    when {
+                        state.calendarLoadedMonth != month -> state.calendarError = message
+                        !silent -> toast("$message，显示的是上次取回的记录")
+                    }
                 }
         }
     }
@@ -262,10 +262,8 @@ class MainActivity : ComponentActivity(), AppActions {
         state.syncing = true
         val (ok, message) = try {
             true to HealthSync(client, prefs, token).run()
-        } catch (e: PushException) {
-            false to e.message.orEmpty()
         } catch (e: Exception) {
-            false to "同步失败：${e.javaClass.simpleName}"
+            false to e.userMessage("同步")
         }
         state.syncing = false
         state.lastSyncOk = ok
@@ -284,7 +282,7 @@ class MainActivity : ComponentActivity(), AppActions {
             val result = try {
                 ReportState.Parsed(recognizeReport(this@MainActivity, uri, state.reportFormat))
             } catch (e: Exception) {
-                ReportState.Failed("图片读不出来（${e.javaClass.simpleName}）")
+                ReportState.Failed("图片打不开或已损坏（${e.javaClass.simpleName}），换一张再试")
             }
             if (attempt == reportAttempt) state.report = result
         }
@@ -302,12 +300,22 @@ class MainActivity : ComponentActivity(), AppActions {
             val minute = report.measuredAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             state.upload = try {
                 postReport(token, report.toIngestJson(minute)).let { UploadState.Done(it.ok, it.message) }
-            } catch (e: PushException) {
-                UploadState.Done(false, e.message.orEmpty())
             } catch (e: Exception) {
-                UploadState.Done(false, "上传失败：${e.javaClass.simpleName}")
+                UploadState.Done(false, e.userMessage("上传"))
             }
         }
+    }
+
+    private fun toast(text: String) {
+        lifecycleScope.launch { state.snackbar.show(text) }
+    }
+
+    /** 给人看的失败原因（DESIGN §14：说发生了什么、怎么补救）。服务端给的原因本来就是中文，原样用。 */
+    private fun Throwable.userMessage(action: String): String = when (this) {
+        is PushException -> message.orEmpty()
+        is SocketTimeoutException -> "连接 Kinetrail 超时，请稍后重试"
+        is IOException -> "无法连接 Kinetrail，请检查网络"
+        else -> "${action}失败（${javaClass.simpleName}）"
     }
 
     private companion object {

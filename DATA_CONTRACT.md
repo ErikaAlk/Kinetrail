@@ -303,7 +303,7 @@ amend 必须提供稳定 entry_id、session_id、expected_revision、修正原�
 
 ## 11. 物理删除称重（2026-09-22，用户要求）
 
-手机「记录」页每次称重的卡片底部可以永久删除这次称重（`POST /app/measurements/delete {record_id}`，实现为 `src/purge.ts`）。这是事实表「不物理删除」的第二个例外，经用户明确要求；训练事实仍然没有物理删除。
+手机「记录」页点开每次称重的卡片，可以永久删除这次称重（`POST /app/measurements/delete {record_id}`，实现为 `src/purge.ts`）。这是事实表「不物理删除」的第二个例外，经用户明确要求；训练事实仍然没有物理删除。
 
 - **鉴权**：复用手机推送令牌（`HC_INGEST_TOKEN_SHA256`），又一次扩权：令牌泄漏后能永久删体测。按 IP 20 次/分钟、全局 10 次/分钟限流；处置靠按运维手册第 6 节轮换令牌，恢复靠加密备份与 D1 Time Travel。
 - **范围**：本人（`HC_PROFILE_REF`）、`dataset=weight`、来源为 `hc:` 或 `ble:` 的一条记录。旧 FitDays 记录连着阻抗等关联记录，而关联规则没有验证（`JOIN_RULES_VERIFIED=false`），不开放（`not_deletable`）。别的成员或不存在的 ID 返回 `not_found`。

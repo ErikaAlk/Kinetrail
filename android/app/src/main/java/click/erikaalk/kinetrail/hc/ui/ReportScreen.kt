@@ -2,146 +2,163 @@ package click.erikaalk.kinetrail.hc.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Text
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import click.erikaalk.kinetrail.hc.designsystem.KtSpacing
-import click.erikaalk.kinetrail.hc.designsystem.KtType
-import click.erikaalk.kinetrail.hc.designsystem.component.BannerTone
-import click.erikaalk.kinetrail.hc.designsystem.component.InlineBanner
-import click.erikaalk.kinetrail.hc.designsystem.component.KtCard
-import click.erikaalk.kinetrail.hc.designsystem.component.PageTitle
-import click.erikaalk.kinetrail.hc.designsystem.component.PrimaryButton
-import click.erikaalk.kinetrail.hc.designsystem.component.SecondaryButton
-import click.erikaalk.kinetrail.hc.designsystem.component.SettingRow
-import click.erikaalk.kinetrail.hc.designsystem.component.SettingsSection
-import click.erikaalk.kinetrail.hc.designsystem.ktColors
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import click.erikaalk.coloroskit.components.CoAlertDialog
+import click.erikaalk.coloroskit.components.CoBarAction
+import click.erikaalk.coloroskit.components.CoButton
+import click.erikaalk.coloroskit.components.CoCard
+import click.erikaalk.coloroskit.components.CoCategoryTitle
+import click.erikaalk.coloroskit.components.CoDialogButton
+import click.erikaalk.coloroskit.components.CoDialogButtonRole
+import click.erikaalk.coloroskit.components.CoEmptyState
+import click.erikaalk.coloroskit.components.CoListItem
+import click.erikaalk.coloroskit.components.CoLoading
+import click.erikaalk.coloroskit.components.CoTrailing
+import click.erikaalk.coloroskit.tokens.CoTokens
 import click.erikaalk.kinetrail.hc.report.BodyReport
 import click.erikaalk.kinetrail.hc.report.Measured
 import click.erikaalk.kinetrail.hc.report.SegmentValue
 import click.erikaalk.kinetrail.hc.report.Segments
 import click.erikaalk.kinetrail.hc.report.fmt
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+
+private val L = CoTokens.List
 
 /**
  * 识图结果核对页：摘要 → 各分区读数 → 上传。
  * 交叉校验不过（数字读错了）或者连时间、体重都没认出时不给上传，只给重新选择：服务端对同一次称重的报告不可变，
- * 宁可拦下来也不把读错的数写进去。个别指标没认出不拦——列在页顶，上传的 JSON 里没有这几项，同时说清楚补不回来。
+ * 宁可拦下来也不把读错的数写进去。个别指标没认出不拦，值写“未识别”；上传前用确认框说清缺的几项补不回来。
  */
 @Composable
-fun ReportScreen(state: AppState, actions: AppActions, insets: PageInsets) {
-    val pad = Modifier.padding(horizontal = KtSpacing.Padding.pageX)
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(top = insets.top, bottom = insets.bottom),
+fun ReportScreen(state: AppState, actions: AppActions) {
+    KtPage(
+        Screen.Report.title,
+        onBack = { actions.navigate(Screen.Sync) },
+        actions = listOf(CoBarAction("重新选择图片", onClick = actions::pickReport, icon = { GlyphIcon(Glyph.Image, it) })),
     ) {
-        PageTitle(text = Screen.Report.title, onTitleBounds = insets.onTitleBounds)
-        val parsed = (state.report as? ReportState.Parsed)?.result
-        if (parsed?.uploadable != true || parsed.missed.isNotEmpty()) Column(
-            pad.padding(top = KtSpacing.pageTitleToSection),
-            verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.group),
-        ) {
-            when (val report = state.report) {
-                ReportState.Recognizing -> Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(KtSpacing.Gap.inline),
-                ) {
-                    CircularProgressIndicator(Modifier.size(20.dp), color = ktColors.accent.text, strokeWidth = 2.dp)
-                    Text("正在识别…", style = KtType.body, color = ktColors.text.secondary)
-                }
-                is ReportState.Failed -> {
-                    InlineBanner(report.message, tone = BannerTone.Error)
-                    SecondaryButton("重新选择图片", onClick = actions::pickReport)
-                }
-                is ReportState.Parsed -> {
-                    val result = report.result
-                    if (!result.uploadable) {
-                        InlineBanner(result.problems.joinToString("\n"), tone = BannerTone.Warning)
-                        SecondaryButton("重新选择图片", onClick = actions::pickReport)
-                    } else if (result.missed.isNotEmpty()) {
-                        InlineBanner(
-                            "没认出：${result.missed.joinToString("、")}。\n" +
-                                "其余读数可以照常上传，缺的这几项报告挂上去之后补不回来；想要完整的就换一张更清楚的图。",
-                            tone = BannerTone.Warning,
-                        )
-                        SecondaryButton("重新选择图片", onClick = actions::pickReport)
+        when (val report = state.report) {
+            ReportState.Recognizing -> Column(
+                Modifier.fillMaxWidth().padding(vertical = CoTokens.EmptyState.unboundedPaddingV),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CoLoading(large = true)
+                BasicText(
+                    "正在识别…",
+                    Modifier.padding(top = L.categoryMarginV),
+                    style = CoTokens.Type.bodyM.toTextStyle().copy(color = CoTokens.Color.label2.current),
+                )
+            }
+            is ReportState.Failed -> CoEmptyState("无法读取图片", subtitle = report.message, actionText = "重新选择", onAction = actions::pickReport)
+            is ReportState.Parsed -> {
+                val result = report.result
+                val body = result.report
+                when {
+                    body == null -> CoEmptyState(
+                        "无法识别报告", subtitle = result.problems.joinToString("；"), actionText = "重新选择", onAction = actions::pickReport,
+                    )
+                    // 读错了不能只写“未识别”：逐条列出哪里对不上，下面的读数照常摆出来对照
+                    !result.uploadable -> {
+                        CoCategoryTitle("读数对不上，不能上传")
+                        CoCard {
+                            result.problems.forEach {
+                                BasicText(it, style = L.summary.toTextStyle().copy(color = CoTokens.Color.label1.current))
+                            }
+                        }
                     }
                 }
-            }
-        }
-        val body = parsed?.report ?: return@Column
-
-        Summary(body)
-        ReportSections(body)
-
-        Column(
-            pad.padding(top = KtSpacing.Gap.section),
-            verticalArrangement = Arrangement.spacedBy(KtSpacing.Gap.group),
-        ) {
-            val upload = state.upload
-            if (upload is UploadState.Done) {
-                InlineBanner(upload.message, tone = if (upload.ok) BannerTone.Success else BannerTone.Error)
-            }
-            if (!state.tokenSaved) InlineBanner("保存推送令牌后才能上传。", tone = BannerTone.Warning)
-            if (parsed.uploadable && !(upload is UploadState.Done && upload.ok)) {
-                PrimaryButton(
-                    text = when {
-                        upload == UploadState.Uploading -> "上传中…"
-                        parsed.missed.isNotEmpty() -> "仍然上传（缺 ${parsed.missed.size} 项）"
-                        else -> "上传到 Kinetrail"
-                    },
-                    enabled = state.tokenSaved && upload != UploadState.Uploading,
-                    onClick = actions::uploadReport,
-                )
+                if (body != null) {
+                    Summary(body)
+                    ReportSections(body)
+                    if (result.uploadable) UploadBar(state, actions, result.missed)
+                }
             }
         }
     }
 }
 
+/**
+ * 上传按钮和结果。缺项时先弹确认框：报告挂上后不可改，缺的几项补不回来（DESIGN §11.4：不可逆后果写在确认框里）。
+ * 成功后按钮收起，只留结果；失败时结果写在按钮上方，按钮还能再点。
+ */
+@Composable
+private fun UploadBar(state: AppState, actions: AppActions, missed: List<String>) {
+    val upload = state.upload
+    var confirming by remember { mutableStateOf(false) }
+    val note = when {
+        upload is UploadState.Done -> upload.message
+        !state.tokenSaved -> "先在“设置 - 推送令牌”保存令牌"
+        else -> null
+    }
+    Column(Modifier.fillMaxWidth().padding(top = L.groupTop * 2), horizontalAlignment = Alignment.CenterHorizontally) {
+        note?.let {
+            BasicText(
+                it,
+                Modifier.fillMaxWidth().padding(horizontal = L.categoryIndent),
+                style = CoTokens.Type.bodyS.toTextStyle().copy(color = CoTokens.Color.label2.current, textAlign = TextAlign.Center),
+            )
+        }
+        if (upload is UploadState.Done && upload.ok) return@Column
+        CoButton(
+            when {
+                upload == UploadState.Uploading -> "正在上传…"
+                missed.isNotEmpty() -> "上传（缺 ${missed.size} 项）"
+                else -> "上传到 Kinetrail"
+            },
+            onClick = { if (missed.isEmpty()) actions.uploadReport() else confirming = true },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = L.categoryIndent).padding(top = L.categoryMarginV),
+            enabled = state.tokenSaved && upload != UploadState.Uploading,
+        )
+    }
+    if (confirming) {
+        CoAlertDialog(
+            onDismissRequest = { confirming = false },
+            title = "要上传缺 ${missed.size} 项的报告吗？",
+            message = "未识别：${missed.joinToString("、")}。报告挂到这次称重上之后不能修改，缺的这几项补不回来",
+            buttons = listOf(
+                CoDialogButton("上传", CoDialogButtonRole.Recommended, onClick = actions::uploadReport),
+                CoDialogButton("取消", onClick = {}),
+            ),
+        )
+    }
+}
+
 @Composable
 private fun Summary(r: BodyReport) {
-    val colors = ktColors
-    KtCard(Modifier.padding(top = KtSpacing.pageTitleToSection)) {
-        Text(
-            r.measuredAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")),
-            style = KtType.secondary,
-            color = colors.text.secondary,
-        )
-        Row(
-            Modifier.padding(top = KtSpacing.Gap.related),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(KtSpacing.space6),
-        ) {
+    val today = LocalDate.now()
+    CoCategoryTitle(r.measuredAt.format(DateTimeFormatter.ofPattern(if (r.measuredAt.year == today.year) "M月d日 HH:mm" else "yyyy年M月d日 HH:mm")))
+    CoCard {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(L.statusGap), verticalArrangement = Arrangement.spacedBy(L.paddingV)) {
             Metric("${"%.2f".format(r.weight.value)} kg", "体重")
             Metric(r.bodyFatPct?.let { "${one(it)}%" } ?: MISSING, "体脂率")
             Metric(r.bodyScore?.let { fmt(it) } ?: MISSING, "身体得分")
         }
         val meta = listOfNotNull(r.age?.let { "年龄 $it" }, r.heightCm?.let { "身高 ${fmt(it)} cm" })
-        if (meta.isNotEmpty()) Text(
-            meta.joinToString(" · "),
-            style = KtType.secondary,
-            color = colors.text.secondary,
-            modifier = Modifier.padding(top = KtSpacing.Gap.inline),
+        if (meta.isNotEmpty()) BasicText(
+            metaText(meta),
+            Modifier.padding(top = L.paddingV),
+            style = L.summary.toTextStyle().copy(color = CoTokens.Color.label2.current),
         )
     }
 }
 
 @Composable
 private fun Metric(value: String, label: String) {
-    Column {
-        Text(value, style = KtType.metric, color = ktColors.text.primary)
-        Text(label, style = KtType.caption, color = ktColors.text.secondary)
+    Column(Modifier.semantics(mergeDescendants = true) {}) {
+        BasicText(value, style = CoTokens.Type.headlineM.toTextStyle().copy(color = CoTokens.Color.label1.current, fontFeatureSettings = "tnum"))
+        BasicText(label, style = CoTokens.Type.bodyXS.toTextStyle().copy(color = CoTokens.Color.label2.current))
     }
 }
 
@@ -158,12 +175,14 @@ private fun ReportSections(r: BodyReport) {
         Triple("蛋白质", r.protein, r.proteinPct), Triple("身体水份", r.bodyWater, r.bodyWaterPct),
         Triple("肌肉", r.muscle, r.musclePct), Triple("骨骼肌", r.skeletalMuscle, r.skeletalMusclePct),
     )
-    SettingsSection(
-        title = "身体成分",
-        rows = composition.map { (label, m, pct) ->
-            { SettingRow(title = label, subtitle = range(m), value = mass(m, pct) ?: MISSING) }
-        },
-    )
+    CoCategoryTitle("身体成分")
+    composition.forEachIndexed { i, (label, m, pct) ->
+        CoListItem(
+            label, positionOf(i, composition.size),
+            summary = range(m),
+            trailing = CoTrailing.Status(mass(m, pct) ?: MISSING, arrow = false),
+        )
+    }
     Values(
         "体重控制",
         listOf(
@@ -210,5 +229,8 @@ private fun Segment(title: String, s: Segments<SegmentValue>) {
 
 @Composable
 private fun Values(title: String, rows: List<Pair<String, String?>>) {
-    SettingsSection(title = title, rows = rows.map { (label, value) -> { SettingRow(title = label, value = value ?: MISSING) } })
+    CoCategoryTitle(title)
+    rows.forEachIndexed { i, (label, value) ->
+        CoListItem(label, positionOf(i, rows.size), trailing = CoTrailing.Status(value ?: MISSING, arrow = false))
+    }
 }

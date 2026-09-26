@@ -1,19 +1,10 @@
 package click.erikaalk.kinetrail.hc.ui
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import click.erikaalk.kinetrail.hc.R
-import click.erikaalk.kinetrail.hc.designsystem.KtSpacing
-import click.erikaalk.kinetrail.hc.designsystem.component.BannerTone
-import click.erikaalk.kinetrail.hc.designsystem.component.InlineBanner
-import click.erikaalk.kinetrail.hc.designsystem.component.PageTitle
-import click.erikaalk.kinetrail.hc.designsystem.component.SettingRow
-import click.erikaalk.kinetrail.hc.designsystem.component.SettingsSection
+import click.erikaalk.coloroskit.components.CoCardPosition
+import click.erikaalk.coloroskit.components.CoCategoryTitle
+import click.erikaalk.coloroskit.components.CoListItem
+import click.erikaalk.coloroskit.components.CoTrailing
 import click.erikaalk.kinetrail.hc.report.ReportFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -22,95 +13,62 @@ import java.time.format.DateTimeFormatter
 
 /**
  * 同步页：把体测推上去的两件事都在这里——Health Connect 里的称重，和报告图片补的读数。
- * 每组一个标题，行只有图标、标题和右侧读数。同步失败的原因放在组下方的提示条里，
- * 成功只在行内给一句结果。
+ * 行尾是当前值（上次同步时间、权限状态），第二行是这次同步的结果，或者现在做不了的原因（DESIGN §9、§10）。
  */
 @Composable
-fun SyncScreen(state: AppState, actions: AppActions, insets: PageInsets) {
+fun SyncScreen(state: AppState, actions: AppActions) {
     val granted = state.grantedPermissions
-    val permissionsComplete = granted != null && granted == state.totalPermissions
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(top = insets.top, bottom = insets.bottom),
-    ) {
-        PageTitle(text = Screen.Sync.title, onTitleBounds = insets.onTitleBounds)
-
-        SettingsSection(
-            title = "Health Connect",
-            hasIcons = true,
-            footer = when {
-                granted == null -> null
-                !state.tokenSaved -> "保存推送令牌后才能同步。"
-                else -> "打开 App 时会自动同步一次。"
+    val complete = granted != null && granted == state.totalPermissions
+    KtPage(Screen.Sync.title, bottomExtra = TabBarRoom) {
+        CoCategoryTitle("Health Connect")
+        CoListItem(
+            "立即同步", CoCardPosition.Head,
+            summary = when {
+                granted == null -> "这台手机的 Health Connect 不可用"
+                !state.tokenSaved -> "先在“设置 - 推送令牌”保存令牌"
+                !complete -> "开启全部读取权限后可用"
+                state.syncing -> null
+                else -> state.lastSyncMessage
             },
-            rows = listOf(
-                {
-                    SettingRow(
-                        title = "立即同步",
-                        icon = R.drawable.ic_refresh_cw,
-                        value = if (state.syncing) "同步中…" else syncTime(state.lastSyncAt),
-                        subtitle = state.lastSyncMessage?.takeIf { state.lastSyncOk && !state.syncing },
-                        enabled = state.tokenSaved && granted != null && !state.syncing,
-                        onClick = actions::sync,
-                    )
-                },
-                {
-                    SettingRow(
-                        title = "读取权限",
-                        icon = R.drawable.ic_activity,
-                        value = when {
-                            granted == null -> "不可用"
-                            permissionsComplete -> "已授权"
-                            else -> "缺 ${state.totalPermissions - granted} 项"
-                        },
-                        onClick = if (granted != null && !permissionsComplete) actions::requestPermissions else null,
-                    )
-                },
-            ),
+            trailing = CoTrailing.Status(if (state.syncing) "正在同步…" else syncTime(state.lastSyncAt), arrow = false),
+            enabled = state.tokenSaved && complete && !state.syncing,
+            onClick = actions::sync,
         )
-        val problem = when {
-            granted == null -> "这台手机上的 Health Connect 不可用，无法读取体测。"
-            !state.lastSyncOk && state.lastSyncMessage != null && !state.syncing -> state.lastSyncMessage
-            else -> null
-        }
-        if (problem != null) {
-            InlineBanner(
-                text = problem.orEmpty(),
-                tone = BannerTone.Error,
-                modifier = Modifier.padding(horizontal = KtSpacing.Padding.pageX).padding(top = KtSpacing.cardToFooter),
-            )
-        }
+        val canRequest = granted != null && !complete
+        CoListItem(
+            "读取权限", CoCardPosition.Tail,
+            trailing = CoTrailing.Status(
+                when {
+                    granted == null -> "不可用"
+                    complete -> "已开启"
+                    else -> "缺 ${state.totalPermissions - granted} 项"
+                },
+                arrow = canRequest,
+            ),
+            onClick = if (canRequest) actions::requestPermissions else null,
+        )
 
-        SettingsSection(
-            title = "体测报告",
-            hasIcons = true,
-            footer = when (state.reportFormat) {
-                ReportFormat.FitDaysPlus -> "也可以在 FitDays+ 的报告页点分享，选身迹。"
-                ReportFormat.XiaomiS800 -> "小米体脂秤 S800 的报告还没有适配，识别不出读数。"
-            },
-            rows = listOf(
-                {
-                    SettingRow(
-                        title = "识别报告图片",
-                        icon = R.drawable.ic_image,
-                        chevron = true,
-                        onClick = actions::pickReport,
-                    )
-                },
-            ),
+        CoCategoryTitle("体测报告")
+        CoListItem(
+            "识别报告图片", CoCardPosition.Full,
+            summary = "报告版式未适配，识别不出读数".takeIf { state.reportFormat == ReportFormat.XiaomiS800 },
+            trailing = CoTrailing.Arrow,
+            onClick = actions::pickReport,
         )
+        // 数据离开设备要写清发什么（DESIGN §10）
+        Footer("图片在本机识别，只上传识别出的读数")
     }
 }
 
+/** 过去的时间：今天、昨天写“今天 10:23”，再往前写日期，跨年加年份（DESIGN §14）。 */
 private fun syncTime(at: Long?): String {
     if (at == null) return "未同步"
     val time = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault())
     val today = LocalDate.now()
+    val clock = time.format(DateTimeFormatter.ofPattern("HH:mm"))
     return when (time.toLocalDate()) {
-        today -> "今天 " + time.format(DateTimeFormatter.ofPattern("HH:mm"))
-        today.minusDays(1) -> "昨天 " + time.format(DateTimeFormatter.ofPattern("HH:mm"))
-        else -> time.format(DateTimeFormatter.ofPattern("M月d日 HH:mm"))
+        today -> "今天 $clock"
+        today.minusDays(1) -> "昨天 $clock"
+        else -> time.format(DateTimeFormatter.ofPattern(if (time.year == today.year) "M月d日 HH:mm" else "yyyy年M月d日 HH:mm"))
     }
 }

@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 只负责冷启动那一帧和系统栏；颜色、字号、圆角全在 KtTheme 里。 -->
+<!--
+  只负责冷启动那一帧和系统栏。颜色、字号、组件全在设计库的 CoTheme 里。
+  forceDarkAllowed=false：深色由 CoTheme 自己画，不让系统再压暗一遍。
+-->
 <resources>
     <style name="Theme.Kinetrail" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/canvas</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>

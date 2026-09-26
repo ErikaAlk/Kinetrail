@@ -3,19 +3,19 @@ package click.erikaalk.kinetrail.hc.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import click.erikaalk.coloroskit.components.CoSnackBarState
 import click.erikaalk.kinetrail.hc.calendar.CalendarDay
 import click.erikaalk.kinetrail.hc.report.ParseResult
 import click.erikaalk.kinetrail.hc.report.ReportFormat
 import java.time.LocalDate
 import java.time.YearMonth
 
-/** 前三个是底栏上的一级目的地，后两个是从它们进去的子页面。 */
+/** 前三个是底栏上的一级目的地，核对报告是从同步页进去的子页面。 */
 enum class Screen(val title: String) {
     Records("训练日历"),
     Sync("体测同步"),
     Settings("设置"),
     Report("核对报告"),
-    Token("推送令牌"),
 }
 
 /**
@@ -25,7 +25,6 @@ enum class Screen(val title: String) {
 val Screen.tab: Screen
     get() = when (this) {
         Screen.Report -> Screen.Sync
-        Screen.Token -> Screen.Settings
         else -> this
     }
 
@@ -73,12 +72,20 @@ class AppState {
     /** 已经取回来的是哪个月；为 null 表示当前这个月还没有可用数据。 */
     var calendarLoadedMonth by mutableStateOf<YearMonth?>(null)
     var calendarLoading by mutableStateOf(false)
+    /** 这个月读不出来的原因；只在屏幕上还没有这个月的数据时设置，有数据时的失败走 [snackbar]。 */
     var calendarError by mutableStateOf<String?>(null)
     var calendarTruncated by mutableStateOf(false)
 
     /** 正在删除的那次称重（服务端的 record_id）；同一时刻只删一条。 */
     var deletingRecord by mutableStateOf<String?>(null)
-    var deleteError by mutableStateOf<String?>(null)
+    /**
+     * 上一次删除失败：record_id 和原因。写在那次称重的详情面板里——面板是独立窗口，Snackbar 会被它挡住。
+     * 再删一次或关掉面板时清掉。
+     */
+    var deleteFailure by mutableStateOf<Pair<String, String>?>(null)
+
+    /** 应用级提示（设计库 Snackbar）：刷新、删除失败这类不占页面位置的结果。 */
+    val snackbar = CoSnackBarState()
 }
 
 /** 界面发给 Activity 的动作。 */

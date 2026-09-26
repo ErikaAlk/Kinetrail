@@ -287,12 +287,12 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 $ingestToken = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 $ingestHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($ingestToken))).ToLower()
 $ingestHash | npx wrangler secret put HC_INGEST_TOKEN_SHA256 -c wrangler.local.jsonc
-# 手机直连电脑，打开“身迹” → 底栏“设置” → 推送令牌，点一下输入框，再运行：
+# 手机直连电脑，打开“身迹” → 底栏“设置” → 推送令牌（弹出输入面板），点一下输入框，再运行：
 adb shell input text $ingestToken
 Remove-Variable ingestToken, ingestHash
 ```
 
-然后在手机上点“保存”，App 会立刻同步一次。`adb shell input text` 运行期间令牌会短暂出现在手机 shell 的进程参数里。
+然后在手机上点面板右上角“保存”，App 会立刻同步一次。`adb shell input text` 运行期间令牌会短暂出现在手机 shell 的进程参数里。
 
 **日常**：先在 FitDays+ 里打开对应体脂秤的测量页，再站上秤，看到手机上的测量动画——只有这样称的才会写入 Health Connect；不经测量页的称重（秤端缓存后补传）不会进 Kinetrail，与是否联网无关。称完打开“身迹”即自动推送（V1 没有后台任务）。在 FitDays+ 里删除称重不会同步；要从 Kinetrail 去掉误测，到系统 Health Connect 的数据页删除那次的体重记录，再打开 App 同步。
 
@@ -344,7 +344,7 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 
 ## 12. 删除称重
 
-手机「记录」页选中日期，称重卡片底部「删除这次称重」→ 确认。服务端在 lease 内把这条记录的全部版本和分块物理删除，只留一条不含读数的墓碑（来源键的哈希），手机重读 Health Connect 或网关重发都不会把它写回来。规则见 DATA_CONTRACT 第 11 节。
+手机「记录」页选中日期，点称重卡片，弹出的面板最下面「删除」→「永久删除」。服务端在 lease 内把这条记录的全部版本和分块物理删除，只留一条不含读数的墓碑（来源键的哈希），手机重读 Health Connect 或网关重发都不会把它写回来。规则见 DATA_CONTRACT 第 11 节。
 
 - 能删的只有 Health Connect 推送和网关来的称重；2026-09-15 以前 FitDays 同步的旧记录没有删除按钮。
 - 删除不可撤销。删除前的加密备份和 D1 Time Travel 里仍有这条记录，要等保留期过去；恢复这类备份的注意事项见第 5 节。
