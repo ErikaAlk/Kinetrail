@@ -235,7 +235,7 @@ npx wrangler d1 execute kinetrail-restore --remote --file scripts/verify-restore
 | MCP OAuth token | 需要全部失效时，撤销该用户的 grant（Provider helper `revokeGrant`），或清空 `OAUTH_KV` 中 `grant:`/`token:` 前缀 | ChatGPT 需要重新连接 |
 | 备份密钥 | 生成新密钥对，之后的备份用新公钥；旧私钥保留到最后一份旧备份过期 | 旧备份只能用旧私钥解密 |
 | Health Connect 推送令牌 | 按第 9 节重新生成：写入新哈希 → 手机上保存新令牌 | 旧令牌立即失效；手机保存新令牌前的同步返回 401，token 不前进，不丢数据。这个令牌也能读日历、物理删除称重 |
-| 体脂秤网关令牌 | 按 `gateway/README.md` 第 4 步重新生成：写入新哈希 → 改网关主机上的 `/etc/kinetrail-gateway.env` → `systemctl restart kinetrail-gateway` | 旧令牌立即失效；期间的称重留在网关队列里，换好后重推 |
+| 体脂秤网关令牌 | 按 `gateway/README.md` 第 4 步重新生成：写入新哈希 → 改网关的配置（HA 集成是 `/config/secrets.yaml` 的 `kinetrail_scale_token`，systemd 部署是 `/etc/kinetrail-gateway.env`）→ 重启 HA 或 `systemctl restart kinetrail-gateway` | 旧令牌立即失效；期间的称重留在网关队列里，换好后重推 |
 
 ## 7. 故障排查
 
@@ -334,7 +334,7 @@ npx wrangler d1 execute kinetrail --remote --command "SELECT id, state, counts_j
 
 **上线顺序**：`npx wrangler d1 migrations apply kinetrail --remote -c wrangler.local.jsonc`（0003：删除授权表、墓碑表、改两个触发器）→ 写 `SCALE_INGEST_TOKEN_SHA256` → 在 `wrangler.local.jsonc` 设 `SCALE_ACCEPT_AFTER` → `npx wrangler deploy -c wrangler.local.jsonc` → 网关主机按 `gateway/README.md` 装好并启动 → 装 0.8.0 的 APK。旧 Worker 没有网关入口（网关队列会一直 404 重试），旧 APK 看不到删除按钮。
 
-**日常**：光脚站上秤、手握手柄，等秤屏出结果。网关日志 `journalctl -u kinetrail-gateway -f` 里出现 `pushed 1: accepted=1` 就进库了，打开「身迹」的记录页能看到。秤屏上的体成分几格是 `--`（没有 App 连着喂心跳），读数以 Kinetrail 为准。
+**日常**：光脚站上秤、手握手柄，等秤屏出结果。网关日志（本人实例在 HAOS 里：`ha core logs | grep gateway`；systemd 部署是 `journalctl -u kinetrail-gateway -f`）里出现 `pushed 1: accepted=1` 就进库了，打开「身迹」的记录页能看到。秤屏上的体成分几格是 `--`（没有 App 连着喂心跳），读数以 Kinetrail 为准。
 
 **检查**（只看结构与计数）：
 

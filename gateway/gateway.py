@@ -1,4 +1,4 @@
-"""沃莱 P3 体脂秤网关：常驻 T6，有人上秤就经 BLE 读结果帧，算体成分，推给 Kinetrail。
+"""沃莱 P3 体脂秤网关：常驻一台有蓝牙的主机（systemd 服务，或 Home Assistant 集成），有人上秤就经 BLE 读结果帧，算体成分，推给 Kinetrail。
 
 只读不写：订阅 FFB2/FFB3 后秤自己推 A2 实时体重和 A7 结果（research/P3.md）。
 时间用收到 A7 的时刻（秤的 RTC 不可信）。推不出去的写进本地队列，服务端给出结果才删。
@@ -31,6 +31,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 
 # 部署时 decode.py、wla37.py 和本文件放同一目录；在仓库里直接跑时去 research/p3 找。
@@ -270,49 +271,56 @@ async def pusher(queue: Queue, origin: str, token: str, wake: asyncio.Event) -> 
             pass
 
 
-async def run() -> None:
+async def run(env: Mapping[str, str] = os.environ) -> None:
+    """env 默认读环境变量；Home Assistant 集成（homeassistant/）从 YAML 配置传进来。
+    文件读写都放进线程：在 HA 的事件循环里直接 open 会被当成阻塞调用。"""
     from bleak import BleakScanner
 
-    origin = os.environ["KT_ORIGIN"].rstrip("/")
-    token = os.environ["KT_SCALE_TOKEN"]
-    mac = os.environ["KT_SCALE_MAC"]
-    height = int(os.environ["KT_HEIGHT_CM"])
-    birth = dt.date.fromisoformat(os.environ["KT_BIRTH_DATE"])
-    sex = int(os.environ["KT_SEX"])
-    queue = Queue(Path(os.environ.get("KT_QUEUE", "/var/lib/kinetrail-gateway/queue.json")))
+    origin = env["KT_ORIGIN"].rstrip("/")
+    token = env["KT_SCALE_TOKEN"]
+    mac = env["KT_SCALE_MAC"]
+    height = int(env["KT_HEIGHT_CM"])
+    birth = dt.date.fromisoformat(env["KT_BIRTH_DATE"])
+    sex = int(env["KT_SEX"])
+    queue = await asyncio.to_thread(Queue, Path(env.get("KT_QUEUE", "/var/lib/kinetrail-gateway/queue.json")))
     seen_path = queue.path.with_name("seen.json")
-    seen: list[str] = load_json(seen_path, [])
+    seen: list[str] = await asyncio.to_thread(load_json, seen_path, [])
     log.info("started, %d pending", len(queue.items))
     wake = asyncio.Event()
     push_task = asyncio.create_task(pusher(queue, origin, token, wake))
 
-    while True:
-        if push_task.done():  # pusher 自己兜住了所有异常，走到这里说明出了想不到的事：退出让 systemd 重启
-            raise RuntimeError("pusher stopped")
-        device = await BleakScanner.find_device_by_address(mac, timeout=60.0)
-        if device is None:
-            continue
-        try:
-            payload = await read_result(device, set(seen))
-        except Exception as e:  # 秤走开、连接中断、BlueZ 报错：都等下一次上秤
-            log.warning("read failed: %s", type(e).__name__)
-            await asyncio.sleep(5)
-            continue
-        if payload is None:
-            log.info("connected but no result frame")
-            continue
-        now = time.time()
-        seen = remember(seen, fingerprint(payload))
-        save_json(seen_path, seen)
-        item = measurement(payload, int(now * 1000), height, birth, sex)
-        if item is None:
-            log.warning("unreadable result frame (%d bytes)", len(payload))
-            continue
-        queue.add(item)
-        wake.set()
-        log.info("measured, %d pending", len(queue.items))
-        # 秤出结果后还会亮一阵、继续广播；歇一会儿再扫，免得反复连它（BlueZ 在设备停播约 30 秒后才从缓存里清掉）
-        await asyncio.sleep(60)
+    try:
+        while True:
+            if push_task.done():  # pusher 自己兜住了所有异常，走到这里说明出了想不到的事：退出让 systemd 或 HA 集成重启
+                raise RuntimeError("pusher stopped")
+            device = await BleakScanner.find_device_by_address(mac, timeout=60.0)
+            if device is None:
+                # HA 的蓝牙包装类找不到设备时立刻返回、不等满 timeout；不歇一下就是个不让出的死循环，会卡死 HA 的事件循环
+                await asyncio.sleep(1)
+                continue
+            try:
+                payload = await read_result(device, set(seen))
+            except Exception as e:  # 秤走开、连接中断、BlueZ 报错：都等下一次上秤
+                log.warning("read failed: %s", type(e).__name__)
+                await asyncio.sleep(5)
+                continue
+            if payload is None:
+                log.info("connected but no result frame")
+                continue
+            now = time.time()
+            seen = remember(seen, fingerprint(payload))
+            await asyncio.to_thread(save_json, seen_path, seen)
+            item = measurement(payload, int(now * 1000), height, birth, sex)
+            if item is None:
+                log.warning("unreadable result frame (%d bytes)", len(payload))
+                continue
+            await asyncio.to_thread(queue.add, item)
+            wake.set()
+            log.info("measured, %d pending", len(queue.items))
+            # 秤出结果后还会亮一阵、继续广播；歇一会儿再扫，免得反复连它（BlueZ 在设备停播约 30 秒后才从缓存里清掉）
+            await asyncio.sleep(60)
+    finally:  # 被外层重启（HA 集成）时别留下一个还在推送的旧任务
+        push_task.cancel()
 
 
 def _self_check() -> None:
